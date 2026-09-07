@@ -234,7 +234,7 @@
   // thicknessFor() here, since that (and the const helpers it calls, like
   // chOf) aren't defined yet this early in the file; calling them now would
   // hit the temporal dead zone and throw before anything renders.
-  const defaultFinish = () => ({ material: 'steel', ch: 0.6, edge: 'segments', segUnit: 2 });
+  const defaultFinish = () => ({ material: 'steel', ch: 0.6, edge: 'segments', segUnit: 2, profile: 'chamfer' });
   const defaultDiscs = () => [
     mkDisc({ od: 25.4, bore: 6.6, qty: 1, t: 15.363 }),
     mkDisc({ od: 25.4, bore: 6.6, qty: 1, t: 30.709 }),
@@ -249,6 +249,7 @@
   if (state.finish.edge !== 'segments') state.finish.edge = 'round';
   if (state.finish.segUnit !== 1) state.finish.segUnit = 2;
   if (!(state.finish.ch >= 0)) state.finish.ch = 0.5;
+  if (state.finish.profile !== 'radius') state.finish.profile = 'chamfer';
 
   if (!Array.isArray(state.discs) || !state.discs.length) state.discs = defaultDiscs();
   state.discs = state.discs.map(x => mkDisc(x));   // fill in fields added since it was saved
@@ -272,6 +273,10 @@
   // ---------- geometry maths ----------
   const SEGS = 180;
   const chOf = () => Math.max(0, parseFloat(state.finish.ch) || 0);
+  // Chamfer cuts a 45° flat; radius rolls a quarter-round the same size.
+  const PROFILES = [['Chamfer', 'chamfer'], ['Rounded', 'radius']];
+  const rounded = () => state.finish.profile === 'radius' && chOf() > 0;
+  const edgeWord = () => state.finish.profile === 'radius' ? 'Radius' : 'Chamfer';
   const boreR = d => d.bore > 0 ? d.bore / 2 : 0;
   const wallOf = d => (d.od - (d.bore > 0 ? d.bore : 0)) / 2;
   const area = d => Math.PI / 4 * (d.od * d.od - d.bore * d.bore);
@@ -317,15 +322,15 @@
     if (!(d.od > 0 && d.t > 0 && d.qty >= 1)) return 'Enter a positive Ø, thickness and qty';
     if (!(d.bore >= 0 && d.bore < d.od)) return 'Bore Ø must be smaller than outer Ø';
     const c = chOf();
-    if (c >= d.t / 2) return 'Chamfer must be under half the thickness';
-    if (c >= wallOf(d) / 2) return 'Chamfer is too big for the wall width';
+    if (c >= d.t / 2) return `${edgeWord()} must be under half the thickness`;
+    if (c >= wallOf(d) / 2) return `${edgeWord()} is too big for the wall width`;
     if (state.finish.edge === 'segments') {
-      if (!(c > 0)) return 'Seams need a chamfer — a seam is two of them meeting';
+      if (!(c > 0)) return `Seams need a ${edgeWord().toLowerCase()} — a seam is two of them meeting`;
       const parts = segParts(d);
       if (parts.length >= 2) {
         const tot = parts.reduce((a, b) => a + b, 0);
         if (d.t * Math.min(...parts) / tot <= 2 * c + 0.3)
-          return `Chamfer is too big for a seam every ${unitOf()} oz`;
+          return `${edgeWord()} is too big for a seam every ${unitOf()} oz`;
       }
     }
     return null;
@@ -379,8 +384,12 @@
   };
 
   const EDGE_HINT = {
-    round: 'Plain turned edge, chamfered top and bottom',
-    segments: u => `A seam is turned every ${u} oz of weight — two 45° cuts as deep as the chamfer, exactly what a real stack shows at a joint. Odd totals finish with a smaller disc, the way you would really stack them.`,
+    round: 'Plain turned edge, broken top and bottom',
+    segments: u => `A seam is turned every ${u} oz of weight — the same pair of edges a real stack shows where two discs meet. Odd totals finish with a smaller disc, the way you would really stack them.`,
+  };
+  const PROFILE_HINT = {
+    chamfer: 'A 45° flat cut on both faces, outer edge and bore',
+    radius: 'A quarter-round of the same size, rolled on with a radius tool — softer to handle and it removes less metal than a chamfer',
   };
 
   // "3 × 2 oz" when they match, "2 + 2 + 1 oz" when the last one is the remainder.
@@ -441,21 +450,28 @@
       </div>`).join('');
   }
 
-  // One choice for the whole job: edge finish, chamfer and material, above the
-  // per-disc list rather than repeated on every card.
+  // One choice for the whole job: seams, edge profile, size and material, above
+  // the per-disc list rather than repeated on every card.
   function renderFinish() {
     const u = unit(), chVal = show(chOf());
     $('#finishBlock').innerHTML = `
       <span class="label">Finish · applies to every disc</span>
       <div class="pick">
-        <span>Edge finish</span>
+        <span>Seams</span>
         <span class="opts" role="group">${EDGES.map(([l, k, eu]) => {
           const on = k === 'round' ? state.finish.edge === 'round' : state.finish.edge === 'segments' && unitOf() === eu;
           return `<button class="opt ${on ? 'on' : ''}" data-act="edge" data-v="${k}" data-u="${eu}" aria-pressed="${on}" title="${eu ? EDGE_HINT.segments(eu) : EDGE_HINT.round}">${l}</button>`;
         }).join('')}</span>
       </div>
+      <div class="pick">
+        <span>Edge profile</span>
+        <span class="opts" role="group">${PROFILES.map(([l, k]) => {
+          const on = (state.finish.profile === 'radius') === (k === 'radius');
+          return `<button class="opt ${on ? 'on' : ''}" data-act="profile" data-v="${k}" aria-pressed="${on}" title="${PROFILE_HINT[k]}">${l}</button>`;
+        }).join('')}</span>
+      </div>
       <div class="fields" style="margin-top: 13px">
-        <label class="f" title="45° on both faces, outer edge and bore — ${otherUnit(chOf())}"><span>Chamfer</span>
+        <label class="f" title="${PROFILE_HINT[state.finish.profile]} — ${otherUnit(chOf())}"><span>${edgeWord()}</span>
           <span class="val"><input type="number" step="${u.step}" min="0" data-finish="ch" value="${chVal}" ${wide(chVal)}><span class="u">${u.label}</span></span></label>
         <label class="f"><span>Material · g/cm³</span><span class="val"><span class="sel"><select data-finish="material">${Object.entries(MATERIALS).map(([k, m]) =>
           `<option value="${k}" ${k === state.finish.material ? 'selected' : ''}>${m.name}</option>`).join('')}</select></span><span class="u" data-rho>${MATERIALS[state.finish.material].rho}</span></span></label>
@@ -568,9 +584,14 @@
         state.finish.edge = b.dataset.v;
         if (state.finish.edge === 'segments') {
           state.finish.segUnit = +b.dataset.u;
-          // the seam is a chamfer pair, so it needs one to show at all
+          // a seam is a pair of broken edges, so it needs a size to show at all
           if (!(chOf() > 0)) state.finish.ch = 0.5;
         }
+        renderFinish(); updateDerived(); break;
+      }
+      case 'profile': {
+        if (state.finish.profile === b.dataset.v) break;
+        state.finish.profile = b.dataset.v;
         renderFinish(); updateDerived(); break;
       }
       case 'units': state.units = state.units === 'mm' ? 'in' : 'mm'; renderUnits(); renderFinish(); renderRows(); persist(); break;
@@ -616,40 +637,73 @@
   }
 
   // The disc's cross-section as a closed (r, y) polyline — the profile a lathe
-  // would cut. Out along the bottom face, up the outer edge at this angle's
-  // radius, back across the top, then down the bore. 45° chamfers cut across all
-  // four edges. Both faces stay flat, so discs seat square against each other.
+  // would cut. Out along the bottom face, up the outer edge, back across the
+  // top, then down the bore. Each of the four edges is broken by the chosen
+  // profile: a 45° chamfer, or a quarter-round of the same size cut with a
+  // radius tool. Both faces stay flat, so discs seat square against each other.
+  const ARC_STEPS = 6;
   function profileWith(d, seams) {
     const c = chOf(), rb = boreR(d), t = d.t, R = d.od / 2, p = [];
     const at = (r, y) => { const l = p[p.length - 1]; if (!l || Math.hypot(l[0] - r, l[1] - y) > 1e-9) p.push([r, y]); };
+    // quarter-round about (cr, cy), swept a0 -> a1
+    const arc = (cr, cy, a0, a1) => {
+      for (let i = 0; i <= ARC_STEPS; i++) {
+        const a = a0 + (a1 - a0) * i / ARC_STEPS;
+        at(cr + c * Math.cos(a), cy + c * Math.sin(a));
+      }
+    };
+    const round = rounded(), Q = Math.PI / 2;
+
     at(rb > 0 ? rb + c : 0, 0);
-    at(R - c, 0); at(R, c);
-    // each seam is the same 45° pair a real stack would show at its joint
-    for (const y of seams) { at(R, y - c); at(R - c, y); at(R, y + c); }
-    at(R, t - c); at(R - c, t);
-    if (rb > 0) { at(rb + c, t); at(rb, t - c); at(rb, c); at(rb + c, 0); }
-    else at(0, t);
+    if (round) arc(R - c, c, -Q, 0);                       // bottom outer
+    else { at(R - c, 0); at(R, c); }
+    // each seam is the same pair of edges a real stack would show at its joint
+    for (const y of seams) {
+      if (round) { arc(R - c, y - c, 0, Q); arc(R - c, y + c, -Q, 0); }
+      else { at(R, y - c); at(R - c, y); at(R, y + c); }
+    }
+    if (round) arc(R - c, t - c, 0, Q);                    // top outer
+    else { at(R, t - c); at(R - c, t); }
+    if (rb > 0) {
+      if (round) { arc(rb + c, t - c, Q, Math.PI); arc(rb + c, c, Math.PI, 1.5 * Math.PI); }
+      else { at(rb + c, t); at(rb, t - c); at(rb, c); at(rb + c, 0); }
+    } else at(0, t);
     return p;
   }
   const discProfile = d => profileWith(d, seamHeights(d));
 
   // Revolve the profile about +Y. The seam closes by index so there is no
-  // start-of-curve notch, and normals stay smooth around the circumference while
-  // breaking crisply across each profile edge — so every chamfer reads sharp.
+  // start-of-curve notch, and normals stay smooth around the circumference.
+  // Along the profile they blend only where it bends gently — so the facets of
+  // a turned radius shade as one smooth curve, while a 45° chamfer or a face
+  // keeps its hard edge.
+  const SMOOTH = 0.80;        // cos of the steepest bend still treated as curved
   function buildGeometry(d) {
-    const profile = discProfile(d), segs = SEGS;
-    const pos = [], nor = [], cos = [], sin = [];
-    for (let i = 0; i < segs; i++) { const a = i / segs * Math.PI * 2; cos.push(Math.cos(a)); sin.push(Math.sin(a)); }
-    const push = (r, y, nr, ny, i) => { pos.push(r * cos[i], y, r * sin[i]); nor.push(nr * cos[i], ny, nr * sin[i]); };
+    const profile = discProfile(d), segs = SEGS, seg = [];
     for (let k = 0; k < profile.length - 1; k++) {
       const [r0, y0] = profile[k], [r1, y1] = profile[k + 1];
       const dr = r1 - r0, dy = y1 - y0, len = Math.hypot(dr, dy);
-      if (len < 1e-9) continue;
-      const nr = dy / len, ny = -dr / len;
+      if (len < 1e-9) continue;                       // zero-length band
+      seg.push({ r0, y0, r1, y1, nr: dy / len, ny: -dr / len });
+    }
+    const merge = (a, b) => {
+      if (!a || !b || a.nr * b.nr + a.ny * b.ny < SMOOTH) return null;
+      const nr = a.nr + b.nr, ny = a.ny + b.ny, l = Math.hypot(nr, ny) || 1;
+      return { nr: nr / l, ny: ny / l };
+    };
+    seg.forEach((s, k) => {
+      s.n0 = merge(s, seg[k - 1]) || s;
+      s.n1 = merge(s, seg[k + 1]) || s;
+    });
+
+    const pos = [], nor = [], cos = [], sin = [];
+    for (let i = 0; i < segs; i++) { const a = i / segs * Math.PI * 2; cos.push(Math.cos(a)); sin.push(Math.sin(a)); }
+    const push = (r, y, n, i) => { pos.push(r * cos[i], y, r * sin[i]); nor.push(n.nr * cos[i], n.ny, n.nr * sin[i]); };
+    for (const s of seg) {
       for (let i = 0; i < segs; i++) {
         const j = (i + 1) % segs;
-        if (r0 > 1e-9) { push(r0, y0, nr, ny, i); push(r1, y1, nr, ny, j); push(r0, y0, nr, ny, j); }
-        if (r1 > 1e-9) { push(r0, y0, nr, ny, i); push(r1, y1, nr, ny, i); push(r1, y1, nr, ny, j); }
+        if (s.r0 > 1e-9) { push(s.r0, s.y0, s.n0, i); push(s.r1, s.y1, s.n1, j); push(s.r0, s.y0, s.n0, j); }
+        if (s.r1 > 1e-9) { push(s.r0, s.y0, s.n0, i); push(s.r1, s.y1, s.n1, i); push(s.r1, s.y1, s.n1, j); }
       }
     }
     const geo = new THREE.BufferGeometry();
@@ -776,13 +830,15 @@
 
   function partListCSV() {
     const T = totals(), q = v => `"${String(v).replace(/"/g, '""')}"`, inch = mm => +(mm / IN).toFixed(4);
+    const radius = state.finish.profile === 'radius';
     const rows = [['Part', 'Qty', 'Outer dia (mm)', 'Outer dia (in)', 'Thickness (mm)', 'Thickness (in)', 'Bore dia (mm)', 'Bore dia (in)',
-      'Chamfer (mm)', 'Edge finish', 'Seam notches', 'Seam heights from base (mm)',
+      'Edge profile', `${edgeWord()} (mm)`, 'Seams', 'Seam notches', 'Seam heights from base (mm)',
       'Material', 'Mass each (g)', 'Mass total (g)', 'Mass total (oz)']];
     state.discs.forEach((d, i) => {
       if (!valid(d)) return;
       const m = massOf(d), seams = seamHeights(d), H = d.t;
       rows.push([`Part ${letter(i)}`, d.qty, +d.od.toFixed(2), inch(d.od), +H.toFixed(2), inch(H), +d.bore.toFixed(2), inch(d.bore),
+        radius ? 'Radius (quarter-round)' : 'Chamfer 45°',
         chOf() ? +chOf().toFixed(2) : '—',
         segmented(d) ? `Turned to read as ${partsLabel(d)}` : 'Turned round',
         seams.length || '—', seams.length ? seams.map(y => y.toFixed(2)).join(' / ') : '—',
@@ -790,10 +846,13 @@
     });
     rows.push([]);
     rows.push(['Totals', T.n + ' discs', 'Stack height (mm)', T.len.toFixed(1), 'Mass (g)', T.mass.toFixed(1), 'Mass (oz)', (T.mass / OZ).toFixed(2)]);
-    rows.push(['Note', 'Chamfer, edge finish and material are one choice for the whole job, not per part. ' +
-      'All dimensions mm. Chamfer is 45° on both faces, outer edge and bore. Outer dia is the max dia, before the chamfer. ' +
-      'A segmented part is ONE piece: each seam notch is a 90° V turned into the outer dia at the stated height from the base, formed by two 45° cuts to the ' +
-      'chamfer depth, so the part reads as a stack of separate discs. ' +
+    rows.push(['Note', 'Edge profile, edge size and material are one choice for the whole job, not per part. All dimensions mm. ' +
+      (radius
+        ? 'Every edge is a quarter-round of the stated radius — both faces, outer edge and bore. Outer dia is the max dia, at mid-thickness. '
+        : 'Every edge is a 45° chamfer of the stated size — both faces, outer edge and bore. Outer dia is the max dia, before the chamfer. ') +
+      'A segmented part is ONE piece: at each seam height the outer dia is grooved with the same pair of edges, ' +
+      (radius ? 'two quarter-rounds meeting, ' : 'two 45° cuts meeting as a 90° V, ') +
+      'so the part reads as a stack of separate discs. ' +
       'Both faces are flat and clear — no facing features, so discs seat square against each other. ' +
       'Bore is a plain through hole, not threaded.']);
     return rows.map(r => r.map(q).join(',')).join('\r\n') + '\r\n';
@@ -808,7 +867,8 @@
       for (let q = 0; q < d.qty; q++) {
         if (x + d.od + gap > maxW && x > gap) { x = gap; y += rowH + gap + 4; rowH = 0; }
         items.push({ cx: x + d.od / 2, cy: y + d.od / 2, d,
-          label: `Part ${letter(i)} Ø${r2(d.od)}×${r2(d.t)} bore ${r2(d.bore)}${chOf() ? ' ch ' + r2(chOf()) : ''}` +
+          label: `Part ${letter(i)} Ø${r2(d.od)}×${r2(d.t)} bore ${r2(d.bore)}` +
+            `${chOf() ? (state.finish.profile === 'radius' ? ' r' : ' ch ') + r2(chOf()) : ''}` +
             `${segmented(d) ? ` reads as ${partsLabel(d)}` : ''}` });
         x += d.od + gap; rowH = Math.max(rowH, d.od); W = Math.max(W, x);
       }
