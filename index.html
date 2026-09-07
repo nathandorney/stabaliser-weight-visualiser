@@ -1,0 +1,840 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Design archery stabiliser weight stacks in 3D — set disc dimensions, mass, chamfers and turned seams, then export STL, CSV or SVG/DXF.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20100%20100%27%3E%3Ctext%20y%3D%27.9em%27%20font-size%3D%2790%27%3E%E2%9A%AB%3C%2Ftext%3E%3C%2Fsvg%3E">
+<title>Stabaliser weight visualiser</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;450;500&display=swap">
+<style>
+  /* One light palette, committed — a bench under good light. Ink, hairlines,
+     one blue reserved for what is selected. Nothing else is coloured. */
+  :root {
+    color-scheme: light;
+    --paper: #FFFFFF; --canvas: #F1F2F4; --field: #F4F5F7; --field-on: #FFFFFF;
+    --ink: #16181B; --muted: #7A8087; --faint: #A8AEB5;
+    --rule: #E6E8EB; --rule-strong: #CFD3D8;
+    --accent: #1B4CD8; --accent-ink: #FFFFFF; --accent-wash: #EEF2FD;
+    --danger: #B0261E;
+    --grid: #AEB4BB; --grid-fine: #CDD2D7;
+    --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+    --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", "SF Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 400 14px/1.5 var(--body); overflow: hidden; -webkit-font-smoothing: antialiased; }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; background: none; border: 0; padding: 0; }
+  :focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+  #app { height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+  main { display: grid; grid-template-columns: 392px minmax(0, 1fr); min-height: 0; }
+  aside { border-right: 1px solid var(--rule); overflow-y: auto; display: flex; flex-direction: column; }
+  aside::-webkit-scrollbar { width: 9px; }
+  aside::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 9px; border: 3px solid var(--paper); }
+
+  /* ---------- header ---------- */
+  header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px 20px; padding: 15px 24px 13px; border-bottom: 1px solid var(--rule); }
+  .wordmark { font: 600 19px/1.15 var(--display); letter-spacing: .015em; margin-right: auto; }
+  .units { display: flex; align-items: baseline; gap: 9px; font: 500 13px/1 var(--mono); }
+  .units button { color: var(--faint); }
+  .units button:hover { color: var(--muted); }
+  .units button.on { color: var(--ink); }
+
+  /* ---------- totals ---------- */
+  .totals { display: flex; gap: 30px; padding: 20px 24px 19px; border-bottom: 1px solid var(--rule); }
+  .tot { display: grid; gap: 3px; }
+  .tot .v { font: 400 25px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .tot .l { font-size: 12px; color: var(--muted); }
+
+  /* ---------- finish: applies to every disc ---------- */
+  .finish { padding: 17px 24px 19px; border-bottom: 1px solid var(--rule); }
+  .finish .label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 11px; }
+
+  /* ---------- disc rows ---------- */
+  .rows { display: flex; flex-direction: column; }
+  .disc { padding: 17px 24px 19px; border-bottom: 1px solid var(--rule); }
+  .disc.on { background: var(--accent-wash); }
+  .disc.bad .tag { color: var(--danger); }
+
+  .head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 15px; }
+  .tag { flex: 1; min-width: 0; font: 500 13px/1 var(--mono); color: var(--faint); white-space: nowrap; }
+  .disc.on .tag { color: var(--accent); }
+  .warn { color: var(--danger); font: 13px/1.4 var(--mono); }
+
+  /* actions stay out of the way until the row is in play */
+  .acts { display: flex; gap: 3px; flex: none; opacity: 0; transition: opacity .12s; }
+  .disc:hover .acts, .disc:focus-within .acts, .disc.on .acts { opacity: 1; }
+  .acts button { width: 24px; height: 22px; display: grid; place-items: center; color: var(--faint); border-radius: 3px; }
+  .acts button:hover:not(:disabled) { color: var(--ink); background: var(--field); }
+  .acts button.rm:hover:not(:disabled) { color: var(--danger); }
+  .acts button:disabled { opacity: .3; cursor: default; }
+  .acts svg { width: 14px; height: 14px; }
+
+  /* Dimensions sit under the options, small and tight — typed text on a drawing,
+     not form controls. The number is the content, the unit trails it, and the
+     rule under it appears only when you go to change it. */
+  .fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: 11px 14px; margin-top: 17px; }
+  .f { display: grid; gap: 1px; min-width: 0; }
+  .f > span:first-child { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .val { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+  .val input { min-width: 2ch; max-width: 100%; border: 0; border-bottom: 1px dashed transparent; background: none; padding: 1px 0; font: 400 14px/1.35 var(--mono); font-variant-numeric: tabular-nums; caret-color: var(--accent); -moz-appearance: textfield; transition: border-color .12s; }
+  .val input:hover { border-bottom-color: var(--rule-strong); }
+  .val input:focus { outline: 0; border-bottom: 1px solid var(--accent); }
+  .val input::-webkit-outer-spin-button, .val input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .val .u { font: 11px/1 var(--mono); color: var(--faint); flex: none; }
+
+  .sel { position: relative; display: inline-flex; min-width: 0; flex: 1; }
+  .sel select { appearance: none; -webkit-appearance: none; width: 100%; border: 0; border-bottom: 1px dashed transparent; background: none; padding: 1px 13px 1px 0; font: 400 13px/1.4 var(--body); text-overflow: ellipsis; transition: border-color .12s; }
+  .sel select:hover { border-bottom-color: var(--rule-strong); }
+  .sel select:focus { outline: 0; border-bottom: 1px solid var(--accent); }
+  .sel::after { content: ""; position: absolute; right: 2px; top: 7px; width: 5px; height: 5px; border-right: 1.2px solid var(--faint); border-bottom: 1.2px solid var(--faint); transform: rotate(45deg); pointer-events: none; }
+
+  /* Presets lead the row and read as options you pick from. */
+  .pick { display: grid; gap: 7px; }
+  .pick + .pick { margin-top: 13px; }
+  .pick > span { font-size: 12px; color: var(--muted); }
+  .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .opt { border: 1px solid var(--rule-strong); border-radius: 4px; padding: 5px 11px; font: 400 12px/1 var(--mono); color: var(--muted); transition: border-color .12s, color .12s, background .12s; }
+  .opt:hover { border-color: var(--ink); color: var(--ink); }
+  .opt.on { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+
+  .add { align-self: flex-start; margin: 17px 24px; font-size: 13px; color: var(--muted); }
+  .add:hover { color: var(--accent); }
+
+  /* ---------- footer blocks ---------- */
+  .foot { margin-top: auto; }
+  .block { padding: 17px 24px; border-top: 1px solid var(--rule); }
+  .btn { border: 1px solid var(--rule-strong); border-radius: 3px; padding: 8px 12px; font-size: 13px; line-height: 1.2; white-space: nowrap; }
+  .btn:hover:not(:disabled) { border-color: var(--ink); }
+  .btn.fill { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .btn.fill:hover:not(:disabled) { background: #000; }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .out { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .out .rest { display: flex; gap: 14px; font-size: 12px; }
+  .out .rest button { color: var(--muted); }
+  .out .rest button:hover:not(:disabled) { color: var(--ink); }
+  .out .rest button:disabled { color: var(--faint); cursor: default; }
+  .cap { font-size: 12px; color: var(--muted); line-height: 1.45; margin: 11px 0 0; }
+  .cap code { font-family: var(--mono); font-size: 11px; }
+
+  /* 1 oz reference */
+  details summary { font-size: 12px; color: var(--muted); cursor: pointer; list-style: none; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before { content: "＋ "; color: var(--faint); }
+  details[open] summary::before { content: "－ "; }
+  details summary:hover { color: var(--ink); }
+  details[open] summary { margin-bottom: 12px; }
+  table { border-collapse: collapse; width: 100%; font: 12px var(--mono); font-variant-numeric: tabular-nums; }
+  th { font: 400 12px var(--body); color: var(--muted); text-align: right; padding: 0 0 5px; }
+  th:first-child, td:first-child { text-align: left; }
+  td { text-align: right; padding: 3px 0; border-top: 1px solid var(--rule); color: var(--muted); }
+  tr.match td { color: var(--accent); }
+
+  /* ---------- viewport ---------- */
+  #viewport { position: relative; background: var(--canvas); min-height: 0; }
+  #viewport canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  .hud { position: absolute; left: 20px; bottom: 16px; display: flex; gap: 14px; align-items: baseline; font: 12px var(--mono); color: var(--faint); }
+  .hud button { color: var(--muted); }
+  .hud button:hover { color: var(--ink); }
+  .none { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 14px; }
+  .none p { margin: 0; color: var(--muted); font-size: 13px; }
+
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 12px); opacity: 0; background: var(--ink); color: var(--paper); padding: 9px 15px; border-radius: 3px; font-size: 13px; transition: .18s; pointer-events: none; z-index: 9; max-width: min(90vw, 480px); }
+  .toast.show { transform: translate(-50%, 0); opacity: 1; }
+
+  @media (max-width: 900px) {
+    body { overflow: auto; }
+    #app { height: auto; }
+    main { grid-template-columns: 1fr; }
+    #viewport { order: -1; height: 46vh; border-bottom: 1px solid var(--rule); }
+    aside { border-right: 0; overflow: visible; }
+    .acts { opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) { .toast, .acts, .f input, .f select { transition: none; } }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <header>
+    <div class="wordmark">Stabaliser weight visualiser</div>
+    <div class="units" id="view" role="group" aria-label="Layout"></div>
+    <div class="units" id="units" role="group" aria-label="Units"></div>
+  </header>
+
+  <main>
+    <aside>
+      <div class="totals">
+        <div class="tot"><span class="v" data-g>—</span><span class="l" data-goz>total mass</span></div>
+        <div class="tot"><span class="v" data-len>—</span><span class="l" data-lenin>stack height</span></div>
+        <div class="tot"><span class="v" data-n>0</span><span class="l" data-sizes>discs</span></div>
+      </div>
+
+      <div class="finish" id="finishBlock"></div>
+      <div class="rows" id="rows"></div>
+      <button class="add" data-act="add">+ Add disc</button>
+
+      <div class="foot">
+        <div class="block">
+          <div class="out" id="out"></div>
+          <p class="cap" id="cap"></p>
+        </div>
+      </div>
+    </aside>
+
+    <section id="viewport">
+      <canvas id="gl"></canvas>
+      <div class="hud"><span>grid 10 mm</span><span id="hudnote"></span><button id="fit">Fit view</button></div>
+      <div class="none" id="none" hidden>
+        <p>No discs yet.</p>
+        <button class="btn" data-act="add">Add the first disc</button>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(() => {
+  'use strict';
+  const OZ = 28.3495, IN = 25.4;
+  const MATERIALS = {
+    steel:     { name: 'Mild steel',       rho: 7.85,  color: 0x9aa0a6 },
+    stainless: { name: 'Stainless 304',    rho: 7.93,  color: 0xbcc1c6 },
+    tungsten:  { name: 'Tungsten',         rho: 19.25, color: 0x63686e },
+    brass:     { name: 'Brass',            rho: 8.50,  color: 0xc0a355 },
+    aluminium: { name: 'Aluminium',        rho: 2.70,  color: 0xd6dade },
+    pla:       { name: 'PLA (print test)', rho: 1.24,  color: 0xeceae4 },
+  };
+  const LS_KEY = 'stabaliser-weight-visualiser.v1';
+
+  // ---------- state ----------
+  let uid = 1;
+  const id = () => 'd' + (uid++) + Math.random().toString(36).slice(2, 6);
+  // A disc is just its dimensions. Edge finish, chamfer and material are one
+  // choice for the whole job — a real batch is cut from one bar stock in one
+  // finish — so they live on state.finish, not on each disc.
+  const mkDisc = (o = {}) => ({ od: o.od ?? 25.4, t: o.t ?? 7.6, bore: o.bore ?? 6.6, qty: o.qty ?? 1, id: id() });
+  // Default finish is 2 oz seams, so the starter discs can show off what that
+  // actually looks like: a 2, a 4 (one seam) and a 6 (two seams).
+  const defaultFinish = () => ({ material: 'steel', ch: 0.6, edge: 'segments', segUnit: 2 });
+  function defaultDiscs() {
+    const base = { od: 25.4, bore: 6.6, qty: 1, t: 10 };
+    return [2, 4, 6].map(oz => mkDisc({ ...base, t: +thicknessFor(base, oz * OZ).toFixed(3) }));
+  }
+  let state = {};
+  try { const saved = JSON.parse(localStorage.getItem(LS_KEY)); if (saved && typeof saved === 'object') state = saved; } catch (e) {}
+
+  // Finish resolves first — defaultDiscs() below needs it to size the seams correctly.
+  if (!state.finish || typeof state.finish !== 'object') state.finish = defaultFinish();
+  if (!MATERIALS[state.finish.material]) state.finish.material = 'steel';
+  if (state.finish.edge !== 'segments') state.finish.edge = 'round';
+  if (state.finish.segUnit !== 1) state.finish.segUnit = 2;
+  if (!(state.finish.ch >= 0)) state.finish.ch = 0.5;
+
+  if (!Array.isArray(state.discs) || !state.discs.length) state.discs = defaultDiscs();
+  state.discs = state.discs.map(x => mkDisc(x));   // fill in fields added since it was saved
+  if (state.units !== 'in') state.units = 'mm';
+  if (state.view !== 'beside') state.view = 'stacked';
+  let selected = null;
+  const persist = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) {} };
+
+  // ---------- units: stored in mm, shown in the chosen unit ----------
+  const LENGTHS = ['od', 't', 'bore'];
+  const COUNTS = { qty: [1, 999] };
+  const unit = () => state.units === 'in'
+    ? { label: 'in', per: IN, step: 0.005, dp: 4 }
+    : { label: 'mm', per: 1,  step: 0.1,   dp: 2 };
+  const show = mm => { const u = unit(); return +(mm / u.per).toFixed(u.dp); };
+  const toMM = v => v * unit().per;
+  const OD_PRESETS = [['1"', 25.4], ['1.25"', 31.75], ['1.5"', 38.1], ['2"', 50.8]];
+
+  // ---------- geometry maths ----------
+  const SEGS = 180;
+  const chOf = () => Math.max(0, parseFloat(state.finish.ch) || 0);
+  const boreR = d => d.bore > 0 ? d.bore / 2 : 0;
+  const wallOf = d => (d.od - (d.bore > 0 ? d.bore : 0)) / 2;
+  const area = d => Math.PI / 4 * (d.od * d.od - d.bore * d.bore);
+
+  // --- the finish ---
+  // Two chamfered discs butted together read as a single V notch: 45° up, 45°
+  // down, as deep as the chamfer. Turn that form at even heights and one thick
+  // disc reads as a stack of thinner ones — a 4 oz that looks like two 2 oz.
+  // It's a turned form, so it's rotationally symmetric: nothing to line up.
+  const EDGES = [['Round', 'round', 0], ['1 oz seams', 'segments', 1], ['2 oz seams', 'segments', 2]];
+  const unitOf = () => state.finish.segUnit === 1 ? 1 : 2;   // oz per apparent disc
+  const segmentable = () => state.finish.edge === 'segments' && chOf() > 0;
+  const plainOz = d => moment(profileWith(d, [])) * Math.PI * 2 / 1000 * MATERIALS[state.finish.material].rho / OZ;
+
+  // The apparent discs, in oz. Whole units first, then whatever is left over —
+  // a 5 oz on a 2 oz unit reads as 2 + 2 + 1, which is how you'd really stack it.
+  // A remainder too small to pass as a disc is spread across the others instead.
+  function segParts(d) {
+    if (!segmentable()) return [];
+    const unit = unitOf(), oz = plainOz(d);
+    if (oz < unit * 1.5) return [];                          // it is one disc already
+    const n = Math.min(24, Math.floor(oz / unit + 1e-9));
+    const parts = Array(n).fill(unit);
+    const rem = oz - n * unit;
+    if (rem >= 0.35) parts.push(rem);
+    else if (rem > 0) for (let i = 0; i < n; i++) parts[i] += rem / n;
+    return parts;
+  }
+  const segCount = d => segParts(d).length || 1;
+  const segmented = d => segCount(d) >= 2;
+
+  // Seams sit where those apparent discs meet, so their heights follow their mass.
+  function seamHeights(d) {
+    const parts = segParts(d);
+    if (parts.length < 2) return [];
+    const tot = parts.reduce((a, b) => a + b, 0), out = [];
+    let acc = 0;
+    for (let i = 0; i < parts.length - 1; i++) { acc += parts[i]; out.push(d.t * acc / tot); }
+    return out;
+  }
+
+  function problem(d) {
+    if (!(d.od > 0 && d.t > 0 && d.qty >= 1)) return 'Enter a positive Ø, thickness and qty';
+    if (!(d.bore >= 0 && d.bore < d.od)) return 'Bore Ø must be smaller than outer Ø';
+    const c = chOf();
+    if (c >= d.t / 2) return 'Chamfer must be under half the thickness';
+    if (c >= wallOf(d) / 2) return 'Chamfer is too big for the wall width';
+    if (state.finish.edge === 'segments') {
+      if (!(c > 0)) return 'Seams need a chamfer — a seam is two of them meeting';
+      const parts = segParts(d);
+      if (parts.length >= 2) {
+        const tot = parts.reduce((a, b) => a + b, 0);
+        if (d.t * Math.min(...parts) / tot <= 2 * c + 0.3)
+          return `Chamfer is too big for a seam every ${unitOf()} oz`;
+      }
+    }
+    return null;
+  }
+  const valid = d => !problem(d);
+
+  // First moment of the cross-section about the axis. Revolved, that integrates
+  // to volume — so every chamfer, flat and flute is paid for in the mass.
+  function moment(p) {
+    let m = 0;
+    for (let i = 0; i < p.length; i++) {
+      const [r0, y0] = p[i], [r1, y1] = p[(i + 1) % p.length];
+      m += (r0 + r1) * (r0 * y1 - r1 * y0);
+    }
+    return Math.abs(m / 6);
+  }
+  const volume = d => moment(discProfile(d)) * Math.PI * 2;
+  const massOf = d => valid(d) ? volume(d) / 1000 * MATERIALS[state.finish.material].rho : 0;
+
+  // Invert volume for thickness. Not a closed form: band spacing widens with
+  // thickness, so the metal a finish removes is itself a function of t. Volume
+  // stays monotonic in t though, so bracket and bisect to full precision.
+  function thicknessFor(d, grams) {
+    const target = grams * 1000 / MATERIALS[state.finish.material].rho;
+    const V = t => volume({ ...d, t });
+    const tmin = Math.max(0.2, 2 * chOf() + 0.1);
+    if (V(tmin) >= target) return tmin;
+    let lo = tmin, hi = Math.max(tmin * 2, 4);
+    while (V(hi) < target && hi < 4000) hi *= 2;
+    for (let i = 0; i < 50; i++) {
+      const mid = (lo + hi) / 2;
+      if (V(mid) < target) lo = mid; else hi = mid;
+    }
+    return (lo + hi) / 2;
+  }
+  const fmt = (n, p = 1) => n.toLocaleString(undefined, { minimumFractionDigits: p, maximumFractionDigits: p });
+  const totals = () => state.discs.reduce((a, d) => {
+    if (!valid(d)) return a;
+    a.mass += massOf(d) * d.qty; a.len += d.t * d.qty; a.n += d.qty; a.maxR = Math.max(a.maxR, d.od / 2); return a;
+  }, { mass: 0, len: 0, n: 0, maxR: 0 });
+
+  // ---------- rendering ----------
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const letter = i => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : '');
+  const ICON = {
+    up:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7"/></svg>',
+    down: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 3.5v9M4.5 9 8 12.5 11.5 9"/></svg>',
+    dup:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>',
+    rm:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>',
+  };
+
+  const EDGE_HINT = {
+    round: 'Plain turned edge, chamfered top and bottom',
+    segments: u => `A seam is turned every ${u} oz of weight — two 45° cuts as deep as the chamfer, exactly what a real stack shows at a joint. Odd totals finish with a smaller disc, the way you would really stack them.`,
+  };
+
+  // "3 × 2 oz" when they match, "2 + 2 + 1 oz" when the last one is the remainder.
+  function partsLabel(d) {
+    const p = segParts(d);
+    if (!p.length) return 'one disc';
+    // parts are sized off the unseamed part, so round before comparing them
+    const q = p.map(n => +n.toFixed(1));
+    return q.every(x => x === q[0])
+      ? `${q.length} × ${q[0]} oz`
+      : `${q.join(' + ')} oz`;
+  }
+
+
+  // The input is sized to its digits so the unit sits right after the number.
+  const wide = v => `style="width:${String(v).length + 0.5}ch"`;
+  const otherUnit = mm => state.units === 'in' ? `${+mm.toFixed(2)} mm` : `${+(mm / IN).toFixed(4)} in`;
+
+  function renderRows() {
+    const u = unit();
+    const dim = (d, f, label, note) => {
+      const v = show(d[f]);
+      return `<label class="f" title="${(note ? note + ' — ' : '') + otherUnit(d[f])}"><span>${label}</span>` +
+        `<span class="val"><input type="number" step="${u.step}" min="0" data-f="${f}" value="${v}" ${wide(v)}>` +
+        `<span class="u">${u.label}</span></span></label>`;
+    };
+
+    $('#rows').innerHTML = state.discs.map((d, i) => `
+      <div class="disc ${d.id === selected ? 'on' : ''} ${valid(d) ? '' : 'bad'}" data-disc="${d.id}">
+        <div class="head">
+          <span class="tag">Part ${letter(i)}</span>
+          <span class="warn" data-warn>${problem(d) ? esc(problem(d)) : ''}</span>
+          <span class="acts">
+            <button data-act="up" title="Move down the stack" ${i === 0 ? 'disabled' : ''}>${ICON.up}</button>
+            <button data-act="down" title="Move up the stack" ${i === state.discs.length - 1 ? 'disabled' : ''}>${ICON.down}</button>
+            <button data-act="dup" title="Duplicate">${ICON.dup}</button>
+            <button data-act="del" class="rm" title="Remove">${ICON.rm}</button>
+          </span>
+        </div>
+        <div class="pick">
+          <span>Stock outer Ø</span>
+          <span class="opts" role="group">${OD_PRESETS.map(([l, mm]) => {
+            const on = Math.abs(d.od - mm) < 0.01;
+            return `<button class="opt ${on ? 'on' : ''}" data-act="od" data-mm="${mm}" aria-pressed="${on}">${l}</button>`;
+          }).join('')}</span>
+        </div>
+        <div class="pick">
+          <span>Set thickness to weigh</span>
+          <span class="opts">${[2, 3, 4, 5, 6].map(oz =>
+            `<button class="opt" data-act="target" data-g="${oz * OZ}">${oz} oz</button>`).join('')}</span>
+        </div>
+        <div class="fields">
+          ${dim(d, 'od', 'Outer Ø')}
+          ${dim(d, 't', 'Thickness')}
+          ${dim(d, 'bore', 'Bore Ø')}
+          <label class="f"><span>Qty</span><span class="val"><input type="number" step="1" min="1" data-f="qty" value="${d.qty}" ${wide(d.qty)}><span class="u">off</span></span></label>
+        </div>
+      </div>`).join('');
+  }
+
+  // One choice for the whole job: edge finish, chamfer and material, above the
+  // per-disc list rather than repeated on every card.
+  function renderFinish() {
+    const u = unit(), chVal = show(chOf());
+    $('#finishBlock').innerHTML = `
+      <span class="label">Finish · applies to every disc</span>
+      <div class="pick">
+        <span>Edge finish</span>
+        <span class="opts" role="group">${EDGES.map(([l, k, eu]) => {
+          const on = k === 'round' ? state.finish.edge === 'round' : state.finish.edge === 'segments' && unitOf() === eu;
+          return `<button class="opt ${on ? 'on' : ''}" data-act="edge" data-v="${k}" data-u="${eu}" aria-pressed="${on}" title="${eu ? EDGE_HINT.segments(eu) : EDGE_HINT.round}">${l}</button>`;
+        }).join('')}</span>
+      </div>
+      <div class="fields" style="margin-top: 13px">
+        <label class="f" title="45° on both faces, outer edge and bore — ${otherUnit(chOf())}"><span>Chamfer</span>
+          <span class="val"><input type="number" step="${u.step}" min="0" data-finish="ch" value="${chVal}" ${wide(chVal)}><span class="u">${u.label}</span></span></label>
+        <label class="f"><span>Material · g/cm³</span><span class="val"><span class="sel"><select data-finish="material">${Object.entries(MATERIALS).map(([k, m]) =>
+          `<option value="${k}" ${k === state.finish.material ? 'selected' : ''}>${m.name}</option>`).join('')}</select></span><span class="u" data-rho>${MATERIALS[state.finish.material].rho}</span></span></label>
+      </div>`;
+  }
+
+  function renderUnits() {
+    $('#units').innerHTML = ['mm', 'in'].map(x =>
+      `<button data-act="units" class="${state.units === x ? 'on' : ''}" ${state.units === x ? 'aria-current="true"' : ''}>${x}</button>`).join('');
+  }
+
+  function renderView() {
+    $('#view').innerHTML = ['stacked', 'beside'].map(v =>
+      `<button data-act="view" data-v="${v}" class="${state.view === v ? 'on' : ''}" ${state.view === v ? 'aria-current="true"' : ''}>${v}</button>`).join('');
+  }
+
+  function renderOut() {
+    $('#out').innerHTML = `
+      <button class="btn fill" data-act="exp-stl">Download STL</button>
+      <span class="rest">
+        <button data-act="exp-csv">Part list</button>
+        <button data-act="exp-svg">SVG</button>
+        <button data-act="exp-dxf">DXF</button>
+      </span>`;
+    $('#cap').innerHTML = 'STL in mm, discs flat, ready to print — it carries the seams. Part list gives a machinist every dimension per disc. SVG and DXF are 1:1 mm outlines. '
+      + (state.discs.some(d => valid(d) && segmented(d))
+        ? 'Seams are a turned feature, so they reach the STL and part list while the flat outlines stay circular.' : '');
+  }
+
+  function updateDerived() {
+    const T = totals(), any = T.n > 0;
+    $('[data-g]').textContent = any ? fmt(T.mass) + ' g' : '—';
+    $('[data-goz]').textContent = any ? `total mass · ${fmt(T.mass / OZ, 2)} oz` : 'total mass';
+    $('[data-len]').textContent = any ? fmt(T.len) + ' mm' : '—';
+    $('[data-lenin]').textContent = any ? `stack height · ${fmt(T.len / IN, 2)} in` : 'stack height';
+    $('[data-n]').textContent = T.n;
+    $('[data-sizes]').textContent = state.discs.length
+      ? `discs · ${state.discs.length} size${state.discs.length === 1 ? '' : 's'}` : 'discs';
+    $('#none').hidden = state.discs.length > 0;
+    state.discs.forEach(d => {
+      const el = document.querySelector(`[data-disc="${d.id}"]`); if (!el) return;
+      const p = problem(d);
+      el.querySelector('[data-warn]').textContent = p || '';
+      el.classList.toggle('bad', !valid(d));
+    });
+    persist(); rebuildScene();
+  }
+  const rerender = fit => { renderRows(); updateDerived(); if (fit) fitView(); };
+
+  // ---------- interaction ----------
+  const sizeInput = el => { if (el) el.style.width = (el.value.length + 0.5) + 'ch'; };
+
+  document.addEventListener('input', e => {
+    const t = e.target;
+
+    if (t.closest('#finishBlock')) {
+      if (t.tagName === 'INPUT') sizeInput(t);
+      if (t.dataset.finish === 'material') {
+        state.finish.material = t.value;
+        const rho = $('[data-rho]'); if (rho) rho.textContent = MATERIALS[state.finish.material].rho;
+      } else if (t.dataset.finish === 'ch') {
+        const v = parseFloat(t.value); if (isNaN(v)) return;
+        state.finish.ch = +toMM(v).toFixed(4);
+      }
+      updateDerived();
+      return;
+    }
+
+    const row = t.closest('[data-disc]');
+    if (!row || !t.dataset.f) return;
+    const d = state.discs.find(x => x.id === row.dataset.disc); if (!d) return;
+    const f = t.dataset.f;
+    if (t.tagName === 'INPUT') sizeInput(t);
+    const v = parseFloat(t.value); if (isNaN(v)) return;
+    if (COUNTS[f]) { const [lo, hi] = COUNTS[f]; d[f] = Math.max(lo, Math.min(hi, Math.round(v))); }
+    else d[f] = +toMM(v).toFixed(4);
+    updateDerived();
+    if (LENGTHS.includes(f)) syncPresets(row, d);
+  });
+
+  const syncPresets = (row, d) => row.querySelectorAll('[data-act="od"]').forEach(b => {
+    const on = Math.abs(d.od - parseFloat(b.dataset.mm)) < 0.01;
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+  });
+
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-act]'), row = e.target.closest('[data-disc]');
+    if (!b) { if (row && selected !== row.dataset.disc) { selected = row.dataset.disc; renderRows(); rebuildScene(); } return; }
+    const act = b.dataset.act;
+    const d = row ? state.discs.find(x => x.id === row.dataset.disc) : null;
+    const i = d ? state.discs.indexOf(d) : -1;
+    switch (act) {
+      case 'add': { const nd = mkDisc(state.discs.length ? { ...state.discs[state.discs.length - 1], qty: 1 } : {}); state.discs.push(nd); selected = nd.id; rerender(state.discs.length === 1); break; }
+      case 'dup': { const nd = mkDisc({ ...d }); state.discs.splice(i + 1, 0, nd); selected = nd.id; rerender(); break; }
+      case 'del': state.discs.splice(i, 1); if (selected === d.id) selected = null; rerender(); break;
+      case 'up': if (i > 0) { state.discs.splice(i - 1, 0, state.discs.splice(i, 1)[0]); rerender(); } break;
+      case 'down': if (i < state.discs.length - 1) { state.discs.splice(i + 1, 0, state.discs.splice(i, 1)[0]); rerender(); } break;
+      case 'target': {
+        if (!(d.od > d.bore)) { toast('Set the outer Ø larger than the bore first'); break; }
+        d.t = +thicknessFor(d, parseFloat(b.dataset.g)).toFixed(3);
+        const el = row.querySelector('[data-f="t"]');
+        el.value = show(d.t); sizeInput(el); updateDerived(); break;
+      }
+      case 'od': {
+        d.od = parseFloat(b.dataset.mm);
+        const el = row.querySelector('[data-f="od"]');
+        el.value = show(d.od); sizeInput(el); updateDerived(); syncPresets(row, d); break;
+      }
+      case 'edge': {
+        state.finish.edge = b.dataset.v;
+        if (state.finish.edge === 'segments') {
+          state.finish.segUnit = +b.dataset.u;
+          // the seam is a chamfer pair, so it needs one to show at all
+          if (!(chOf() > 0)) state.finish.ch = 0.5;
+        }
+        renderFinish(); updateDerived(); break;
+      }
+      case 'units': state.units = state.units === 'mm' ? 'in' : 'mm'; renderUnits(); renderFinish(); renderRows(); persist(); break;
+      case 'view': {
+        if (state.view === b.dataset.v) break;
+        state.view = b.dataset.v; renderView(); persist(); rebuildScene(); fitView(); break;
+      }
+      case 'exp-stl': exportSTL(state.discs.filter(valid), 'disc-stack.stl', true); break;
+      case 'exp-csv': saveFile('disc-part-list.csv', partListCSV()); break;
+      case 'exp-svg': saveFile('disc-profiles.svg', profilesSVG()); break;
+      case 'exp-dxf': saveFile('disc-profiles.dxf', profilesDXF()); break;
+    }
+  });
+
+  let toastT;
+  function toast(msg) { const el = $('#toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 2800); }
+
+  // ---------- 3D ----------
+  const canvas = $('#gl');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(30, 1, 1, 5000);
+  const controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = true; controls.dampingFactor = 0.12;
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xc8ced4, 1.0));
+  const key = new THREE.DirectionalLight(0xffffff, 0.95); key.position.set(90, 140, 70); scene.add(key);
+  const fill = new THREE.DirectionalLight(0xffffff, 0.5); fill.position.set(-90, 40, -70); scene.add(fill);
+  const cssColor = n => new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue(n).trim() || '#888');
+  const grid = new THREE.GridHelper(400, 40, cssColor('--grid'), cssColor('--grid-fine'));
+  scene.add(grid);
+  const group = new THREE.Group(); scene.add(group);
+
+  const matCache = {};
+  function material(k, sel) {
+    const ck = k + (sel ? ':sel' : '');
+    if (!matCache[ck]) {
+      const m = new THREE.MeshStandardMaterial({ color: MATERIALS[k].color, metalness: k === 'pla' ? 0.05 : 0.7, roughness: k === 'pla' ? 0.75 : 0.35 });
+      if (sel) m.emissive = cssColor('--accent').multiplyScalar(0.45);
+      matCache[ck] = m;
+    }
+    return matCache[ck];
+  }
+
+  // The disc's cross-section as a closed (r, y) polyline — the profile a lathe
+  // would cut. Out along the bottom face, up the outer edge at this angle's
+  // radius, back across the top, then down the bore. 45° chamfers cut across all
+  // four edges. Both faces stay flat, so discs seat square against each other.
+  function profileWith(d, seams) {
+    const c = chOf(), rb = boreR(d), t = d.t, R = d.od / 2, p = [];
+    const at = (r, y) => { const l = p[p.length - 1]; if (!l || Math.hypot(l[0] - r, l[1] - y) > 1e-9) p.push([r, y]); };
+    at(rb > 0 ? rb + c : 0, 0);
+    at(R - c, 0); at(R, c);
+    // each seam is the same 45° pair a real stack would show at its joint
+    for (const y of seams) { at(R, y - c); at(R - c, y); at(R, y + c); }
+    at(R, t - c); at(R - c, t);
+    if (rb > 0) { at(rb + c, t); at(rb, t - c); at(rb, c); at(rb + c, 0); }
+    else at(0, t);
+    return p;
+  }
+  const discProfile = d => profileWith(d, seamHeights(d));
+
+  // Revolve the profile about +Y. The seam closes by index so there is no
+  // start-of-curve notch, and normals stay smooth around the circumference while
+  // breaking crisply across each profile edge — so every chamfer reads sharp.
+  function buildGeometry(d) {
+    const profile = discProfile(d), segs = SEGS;
+    const pos = [], nor = [], cos = [], sin = [];
+    for (let i = 0; i < segs; i++) { const a = i / segs * Math.PI * 2; cos.push(Math.cos(a)); sin.push(Math.sin(a)); }
+    const push = (r, y, nr, ny, i) => { pos.push(r * cos[i], y, r * sin[i]); nor.push(nr * cos[i], ny, nr * sin[i]); };
+    for (let k = 0; k < profile.length - 1; k++) {
+      const [r0, y0] = profile[k], [r1, y1] = profile[k + 1];
+      const dr = r1 - r0, dy = y1 - y0, len = Math.hypot(dr, dy);
+      if (len < 1e-9) continue;
+      const nr = dy / len, ny = -dr / len;
+      for (let i = 0; i < segs; i++) {
+        const j = (i + 1) % segs;
+        if (r0 > 1e-9) { push(r0, y0, nr, ny, i); push(r1, y1, nr, ny, j); push(r0, y0, nr, ny, j); }
+        if (r1 > 1e-9) { push(r0, y0, nr, ny, i); push(r1, y1, nr, ny, i); push(r1, y1, nr, ny, j); }
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    return geo;
+  }
+  const discGeometry = d => buildGeometry(d);
+  const discGeometrySTL = d => buildGeometry(d).rotateX(Math.PI / 2);
+
+  // A hairline gap is drawn between separate parts so a real stack of two 2 oz
+  // discs is distinguishable from one 4 oz part with a seam turned into it.
+  // Display only: it never reaches the mass, the totals or any export.
+  const VIEW_GAP = 0.5;
+
+  let liveGeos = [];
+  function rebuildScene() {
+    while (group.children.length) group.remove(group.children[group.children.length - 1]);
+    liveGeos.forEach(g => g.dispose());
+    liveGeos = [];
+    const cache = new Map();
+    const geoFor = d => {
+      if (!cache.has(d.id)) { const g = discGeometry(d); cache.set(d.id, g); liveGeos.push(g); }
+      return cache.get(d.id);
+    };
+    const pieces = [];
+    state.discs.forEach(d => { if (valid(d)) for (let q = 0; q < d.qty; q++) pieces.push(d); });
+
+    if (state.view === 'beside') {
+      const gap = 5;
+      const span = pieces.reduce((a, d, i) => a + d.od + (i ? gap : 0), 0);
+      let x = -span / 2;
+      pieces.forEach(d => {
+        const m = new THREE.Mesh(geoFor(d), material(state.finish.material, d.id === selected));
+        m.position.set(x + d.od / 2, 0, 0); m.userData.disc = d.id; group.add(m);
+        x += d.od + gap;
+      });
+    } else {
+      let y = 0;
+      pieces.forEach(d => {
+        const m = new THREE.Mesh(geoFor(d), material(state.finish.material, d.id === selected));
+        m.position.y = y; m.userData.disc = d.id; group.add(m);
+        y += d.t + VIEW_GAP;
+      });
+    }
+    $('#hudnote').textContent = state.view === 'stacked' && pieces.length > 1
+      ? `${VIEW_GAP} mm gap shown between parts` : '';
+  }
+
+  // Frame whatever is actually in the scene, so it suits either layout.
+  const box = new THREE.Box3(), mid = new THREE.Vector3(), size = new THREE.Vector3();
+  function fitView() {
+    if (!group.children.length) {
+      camera.position.set(48, 40, 62); controls.target.set(0, 0, 0); controls.update(); return;
+    }
+    box.setFromObject(group);
+    box.getCenter(mid); box.getSize(size);
+    const radius = Math.max(size.x, size.y, size.z) / 2 + 3;
+    const dist = radius / Math.sin(camera.fov * Math.PI / 360) * 1.2;
+    camera.position.set(mid.x + dist * 0.5, mid.y + dist * 0.42, mid.z + dist * 0.75);
+    controls.target.copy(mid); controls.update();
+  }
+
+  const ray = new THREE.Raycaster(); let downAt = null;
+  canvas.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY]; });
+  canvas.addEventListener('pointerup', e => {
+    if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4) return;
+    const r = canvas.getBoundingClientRect();
+    ray.setFromCamera({ x: (e.clientX - r.left) / r.width * 2 - 1, y: -((e.clientY - r.top) / r.height) * 2 + 1 }, camera);
+    const hit = ray.intersectObjects(group.children).find(h => h.object.userData.disc);
+    const next = hit ? hit.object.userData.disc : null;
+    if (next !== selected) {
+      selected = next; renderRows(); rebuildScene();
+      const row = next && document.querySelector(`[data-disc="${next}"]`);
+      if (row) row.scrollIntoView({ block: 'nearest' });
+    }
+  });
+  $('#fit').addEventListener('click', fitView);
+
+  function resize() {
+    const w = canvas.clientWidth, h = canvas.clientHeight; if (!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe($('#viewport'));
+  (function loop() { controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop); })();
+
+  // ---------- exports ----------
+  function saveFile(filename, data) {
+    const blob = data instanceof Blob ? data : new Blob([data]);
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast('Downloaded ' + filename);
+  }
+
+  // Binary STL, mm, Z up, stacked along Z.
+  function exportSTL(discs, filename, stacked) {
+    const parts = []; let z = 0;
+    discs.forEach(d => {
+      if (!valid(d)) return;
+      const n = stacked ? d.qty : 1;
+      for (let q = 0; q < n; q++) { parts.push({ geo: discGeometrySTL(d), z }); z += d.t; }
+    });
+    if (!parts.length) { toast('Nothing to export — fix the disc dimensions first'); return; }
+    let tris = 0; parts.forEach(p => tris += p.geo.attributes.position.count / 3);
+    const buf = new ArrayBuffer(84 + tris * 50), dv = new DataView(buf);
+    const header = 'Stabaliser weight visualiser ' + filename;
+    for (let i = 0; i < 80; i++) dv.setUint8(i, i < header.length ? header.charCodeAt(i) : 0);
+    dv.setUint32(80, tris, true);
+    let o = 84; const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), nrm = new THREE.Vector3();
+    parts.forEach(({ geo, z }) => {
+      const p = geo.attributes.position.array;
+      for (let i = 0; i < p.length; i += 9) {
+        a.set(p[i], p[i + 1], p[i + 2] + z); b.set(p[i + 3], p[i + 4], p[i + 5] + z); c.set(p[i + 6], p[i + 7], p[i + 8] + z);
+        nrm.subVectors(b, a).cross(c.clone().sub(a)).normalize();
+        [nrm, a, b, c].forEach(v => { dv.setFloat32(o, v.x, true); dv.setFloat32(o + 4, v.y, true); dv.setFloat32(o + 8, v.z, true); o += 12; });
+        dv.setUint16(o, 0, true); o += 2;
+      }
+      geo.dispose();
+    });
+    saveFile(filename, new Blob([buf], { type: 'model/stl' }));
+  }
+
+  function partListCSV() {
+    const T = totals(), q = v => `"${String(v).replace(/"/g, '""')}"`, inch = mm => +(mm / IN).toFixed(4);
+    const rows = [['Part', 'Qty', 'Outer dia (mm)', 'Outer dia (in)', 'Thickness (mm)', 'Thickness (in)', 'Bore dia (mm)', 'Bore dia (in)',
+      'Chamfer (mm)', 'Edge finish', 'Seam notches', 'Seam heights from base (mm)',
+      'Material', 'Mass each (g)', 'Mass total (g)', 'Mass total (oz)']];
+    state.discs.forEach((d, i) => {
+      if (!valid(d)) return;
+      const m = massOf(d), seams = seamHeights(d), H = d.t;
+      rows.push([`Part ${letter(i)}`, d.qty, +d.od.toFixed(2), inch(d.od), +H.toFixed(2), inch(H), +d.bore.toFixed(2), inch(d.bore),
+        chOf() ? +chOf().toFixed(2) : '—',
+        segmented(d) ? `Turned to read as ${partsLabel(d)}` : 'Turned round',
+        seams.length || '—', seams.length ? seams.map(y => y.toFixed(2)).join(' / ') : '—',
+        MATERIALS[state.finish.material].name, m.toFixed(1), (m * d.qty).toFixed(1), (m * d.qty / OZ).toFixed(2)]);
+    });
+    rows.push([]);
+    rows.push(['Totals', T.n + ' discs', 'Stack height (mm)', T.len.toFixed(1), 'Mass (g)', T.mass.toFixed(1), 'Mass (oz)', (T.mass / OZ).toFixed(2)]);
+    rows.push(['Note', 'Chamfer, edge finish and material are one choice for the whole job, not per part. ' +
+      'All dimensions mm. Chamfer is 45° on both faces, outer edge and bore. Outer dia is the max dia, before the chamfer. ' +
+      'A segmented part is ONE piece: each seam notch is a 90° V turned into the outer dia at the stated height from the base, formed by two 45° cuts to the ' +
+      'chamfer depth, so the part reads as a stack of separate discs. ' +
+      'Both faces are flat and clear — no facing features, so discs seat square against each other. ' +
+      'Bore is a plain through hole, not threaded.']);
+    return rows.map(r => r.map(q).join(',')).join('\r\n') + '\r\n';
+  }
+
+  // Every copy nested in rows ≤ 300 mm wide, shared by SVG and DXF.
+  function layout() {
+    const items = [], gap = 6, maxW = 300, r2 = v => +v.toFixed(2);
+    let x = gap, y = gap, rowH = 0, W = 0;
+    state.discs.forEach((d, i) => {
+      if (!valid(d)) return;
+      for (let q = 0; q < d.qty; q++) {
+        if (x + d.od + gap > maxW && x > gap) { x = gap; y += rowH + gap + 4; rowH = 0; }
+        items.push({ cx: x + d.od / 2, cy: y + d.od / 2, d,
+          label: `Part ${letter(i)} Ø${r2(d.od)}×${r2(d.t)} bore ${r2(d.bore)}${chOf() ? ' ch ' + r2(chOf()) : ''}` +
+            `${segmented(d) ? ` reads as ${partsLabel(d)}` : ''}` });
+        x += d.od + gap; rowH = Math.max(rowH, d.od); W = Math.max(W, x);
+      }
+    });
+    return { items, W: Math.max(W, 20), H: y + rowH + gap + 4 };
+  }
+  function profilesSVG() {
+    const { items, W, H } = layout();
+    const cut = items.map(it => `<circle cx="${it.cx}" cy="${it.cy}" r="${it.d.od / 2}"/>` +
+      (it.d.bore > 0 ? `<circle cx="${it.cx}" cy="${it.cy}" r="${it.d.bore / 2}"/>` : '')).join('\n    ');
+    const txt = items.map(it => `<text x="${it.cx}" y="${it.cy + it.d.od / 2 + 3}" text-anchor="middle">${esc(it.label)}</text>`).join('\n    ');
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">
+  <title>Stabaliser weight visualiser profiles — 1:1 mm</title>
+  <g id="CUT" fill="none" stroke="#ff0000" stroke-width="0.1">
+    ${cut}
+  </g>
+  <g id="LABELS" fill="#0000ff" font-family="sans-serif" font-size="2.4">
+    ${txt}
+  </g>
+</svg>
+`;
+  }
+  function profilesDXF() {
+    const { items } = layout(), e = [];
+    const circle = (cx, cy, r) => e.push('0', 'CIRCLE', '8', 'CUT', '10', cx, '20', cy, '30', 0, '40', r);
+    items.forEach(it => {
+      circle(it.cx, -it.cy, it.d.od / 2);
+      if (it.d.bore > 0) circle(it.cx, -it.cy, it.d.bore / 2);
+      e.push('0', 'TEXT', '8', 'LABELS', '10', it.cx - it.d.od / 2, '20', -(it.cy + it.d.od / 2 + 4), '30', 0, '40', 2.4, '1', it.label);
+    });
+    return ['0', 'SECTION', '2', 'HEADER', '9', '$INSUNITS', '70', 4, '0', 'ENDSEC',
+      '0', 'SECTION', '2', 'ENTITIES', ...e, '0', 'ENDSEC', '0', 'EOF'].join('\n') + '\n';
+  }
+
+  // ---------- go ----------
+  renderView(); renderUnits(); renderFinish(); renderOut(); renderRows(); updateDerived(); resize(); fitView();
+})();
+</script>
+</body>
+</html>
