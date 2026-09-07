@@ -224,12 +224,17 @@
   // finish — so they live on state.finish, not on each disc.
   const mkDisc = (o = {}) => ({ od: o.od ?? 25.4, t: o.t ?? 7.6, bore: o.bore ?? 6.6, qty: o.qty ?? 1, id: id() });
   // Default finish is 2 oz seams, so the starter discs can show off what that
-  // actually looks like: a 2, a 4 (one seam) and a 6 (two seams).
+  // actually looks like: a 2, a 4 (one seam) and a 6 (two seams). Thicknesses
+  // are pre-solved for Ø1" steel, 6.6 mm bore, 0.6 mm chamfer — not solved via
+  // thicknessFor() here, since that (and the const helpers it calls, like
+  // chOf) aren't defined yet this early in the file; calling them now would
+  // hit the temporal dead zone and throw before anything renders.
   const defaultFinish = () => ({ material: 'steel', ch: 0.6, edge: 'segments', segUnit: 2 });
-  function defaultDiscs() {
-    const base = { od: 25.4, bore: 6.6, qty: 1, t: 10 };
-    return [2, 4, 6].map(oz => mkDisc({ ...base, t: +thicknessFor(base, oz * OZ).toFixed(3) }));
-  }
+  const defaultDiscs = () => [
+    mkDisc({ od: 25.4, bore: 6.6, qty: 1, t: 15.363 }),
+    mkDisc({ od: 25.4, bore: 6.6, qty: 1, t: 30.709 }),
+    mkDisc({ od: 25.4, bore: 6.6, qty: 1, t: 46.056 }),
+  ];
   let state = {};
   try { const saved = JSON.parse(localStorage.getItem(LS_KEY)); if (saved && typeof saved === 'object') state = saved; } catch (e) {}
 
