@@ -83,6 +83,7 @@
      not form controls. The number is the content, the unit trails it, and the
      rule under it appears only when you go to change it. */
   .fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: 11px 14px; margin-top: 17px; }
+  .fields.three { grid-template-columns: repeat(3, 1fr); }
   .f { display: grid; gap: 1px; min-width: 0; }
   .f > span:first-child { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .val { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
@@ -227,18 +228,18 @@
   // A disc is just its dimensions. Edge finish, chamfer and material are one
   // choice for the whole job — a real batch is cut from one bar stock in one
   // finish — so they live on state.finish, not on each disc.
-  const mkDisc = (o = {}) => ({ od: o.od ?? 25.4, t: o.t ?? 7.6, bore: o.bore ?? 6.6, qty: o.qty ?? 1, id: id() });
+  const mkDisc = (o = {}) => ({ od: o.od ?? 25.4, t: o.t ?? 7.6, qty: o.qty ?? 1, id: id() });
   // Default finish is 2 oz seams, so the starter discs can show off what that
   // actually looks like: a 2, a 4 (one seam) and a 6 (two seams). Thicknesses
-  // are pre-solved for Ø1" steel, 6.6 mm bore, 0.6 mm chamfer — not solved via
+  // are pre-solved for Ø1" steel, 8.2 mm bore, 0.6 mm chamfer — not solved via
   // thicknessFor() here, since that (and the const helpers it calls, like
   // chOf) aren't defined yet this early in the file; calling them now would
   // hit the temporal dead zone and throw before anything renders.
-  const defaultFinish = () => ({ material: 'steel', ch: 0.6, edge: 'segments', segUnit: 2, profile: 'chamfer' });
+  const defaultFinish = () => ({ material: 'steel', bore: 8.2, ch: 0.6, edge: 'segments', segUnit: 2, profile: 'chamfer' });
   const defaultDiscs = () => [
-    mkDisc({ od: 25.4, bore: 6.6, qty: 1, t: 15.363 }),
-    mkDisc({ od: 25.4, bore: 6.6, qty: 1, t: 30.709 }),
-    mkDisc({ od: 25.4, bore: 6.6, qty: 1, t: 46.056 }),
+    mkDisc({ od: 25.4, qty: 1, t: 15.997 }),
+    mkDisc({ od: 25.4, qty: 1, t: 31.972 }),
+    mkDisc({ od: 25.4, qty: 1, t: 47.947 }),
   ];
   let state = {};
   try { const saved = JSON.parse(localStorage.getItem(LS_KEY)); if (saved && typeof saved === 'object') state = saved; } catch (e) {}
@@ -249,6 +250,7 @@
   if (state.finish.edge !== 'segments') state.finish.edge = 'round';
   if (state.finish.segUnit !== 1) state.finish.segUnit = 2;
   if (!(state.finish.ch >= 0)) state.finish.ch = 0.5;
+  if (!(state.finish.bore >= 0)) state.finish.bore = 8.2;
   if (state.finish.profile !== 'radius') state.finish.profile = 'chamfer';
 
   if (!Array.isArray(state.discs) || !state.discs.length) state.discs = defaultDiscs();
@@ -261,7 +263,7 @@
   const persist = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) {} };
 
   // ---------- units: stored in mm, shown in the chosen unit ----------
-  const LENGTHS = ['od', 't', 'bore'];
+  const LENGTHS = ['od', 't'];
   const COUNTS = { qty: [1, 999] };
   const unit = () => state.units === 'in'
     ? { label: 'in', per: IN, step: 0.005, dp: 4 }
@@ -278,13 +280,18 @@
   // ---------- geometry maths ----------
   const SEGS = 180;
   const chOf = () => Math.max(0, parseFloat(state.finish.ch) || 0);
+  const boreOf = () => Math.max(0, parseFloat(state.finish.bore) || 0);
+  // Clearance holes for the threads stabilisers actually use. 5/16"-24 UNF is
+  // the AMO standard on most brands, 1/4"-20 also turns up; M6/M8 are here for
+  // the brands that went metric.
+  const BORES = [['1/4"-20', 6.6], ['5/16"-24', 8.2], ['M6', 6.4], ['M8', 8.4]];
   // Chamfer cuts a 45° flat; radius rolls a quarter-round the same size.
   const PROFILES = [['Chamfer', 'chamfer'], ['Rounded', 'radius']];
   const rounded = () => state.finish.profile === 'radius' && chOf() > 0;
   const edgeWord = () => state.finish.profile === 'radius' ? 'Radius' : 'Chamfer';
-  const boreR = d => d.bore > 0 ? d.bore / 2 : 0;
-  const wallOf = d => (d.od - (d.bore > 0 ? d.bore : 0)) / 2;
-  const area = d => Math.PI / 4 * (d.od * d.od - d.bore * d.bore);
+  const boreR = () => boreOf() / 2;
+  const wallOf = d => (d.od - boreOf()) / 2;
+  const area = d => Math.PI / 4 * (d.od * d.od - boreOf() * boreOf());
 
   // --- the finish ---
   // Two chamfered discs butted together read as a single V notch: 45° up, 45°
@@ -325,7 +332,7 @@
 
   function problem(d) {
     if (!(d.od > 0 && d.t > 0 && d.qty >= 1)) return 'Enter a positive Ø, thickness and qty';
-    if (!(d.bore >= 0 && d.bore < d.od)) return 'Bore Ø must be smaller than outer Ø';
+    if (!(boreOf() < d.od)) return 'Bore Ø must be smaller than outer Ø';
     const c = chOf();
     if (c >= d.t / 2) return `${edgeWord()} must be under half the thickness`;
     if (c >= wallOf(d) / 2) return `${edgeWord()} is too big for the wall width`;
@@ -394,7 +401,7 @@
   };
   const PROFILE_HINT = {
     chamfer: 'A 45° flat cut on both faces, outer edge and bore',
-    radius: 'A quarter-round of the same size, rolled on with a radius tool — softer to handle and it removes less metal than a chamfer',
+    radius: 'A quarter-round of the same size on the outer edges, rolled on with a radius tool. The bore keeps its chamfer as a lead-in for the rod.',
   };
 
   // "3 × 2 oz" when they match, "2 + 2 + 1 oz" when the last one is the remainder.
@@ -448,10 +455,9 @@
             return `<button class="opt ${on ? 'on' : ''}" data-act="target" data-g="${oz * OZ}" aria-pressed="${on}">${oz} oz</button>`;
           }).join('')}</span>
         </div>
-        <div class="fields">
+        <div class="fields three">
           ${dim(d, 'od', 'Outer Ø')}
           ${dim(d, 't', 'Thickness')}
-          ${dim(d, 'bore', 'Bore Ø')}
           <label class="f"><span>Qty</span><span class="val"><input type="number" step="1" min="1" data-f="qty" value="${d.qty}" ${wide(d.qty)}><span class="u">off</span></span></label>
         </div>
       </div>`).join('');
@@ -460,7 +466,7 @@
   // One choice for the whole job: seams, edge profile, size and material, above
   // the per-disc list rather than repeated on every card.
   function renderFinish() {
-    const u = unit(), chVal = show(chOf());
+    const u = unit(), chVal = show(chOf()), boreVal = show(boreOf());
     $('#finishBlock').innerHTML = `
       <span class="label">Finish · applies to every disc</span>
       <div class="pick">
@@ -477,7 +483,16 @@
           return `<button class="opt ${on ? 'on' : ''}" data-act="profile" data-v="${k}" aria-pressed="${on}" title="${PROFILE_HINT[k]}">${l}</button>`;
         }).join('')}</span>
       </div>
-      <div class="fields" style="margin-top: 13px">
+      <div class="pick">
+        <span>Rod thread · sets the bore</span>
+        <span class="opts" role="group">${BORES.map(([l, mm]) => {
+          const on = Math.abs(boreOf() - mm) < 0.01;
+          return `<button class="opt ${on ? 'on' : ''}" data-act="bore" data-mm="${mm}" aria-pressed="${on}" title="Clearance hole for ${l} — ${mm} mm">${l}</button>`;
+        }).join('')}</span>
+      </div>
+      <div class="fields three" style="margin-top: 13px">
+        <label class="f" title="Clearance hole for the stabiliser rod — ${otherUnit(boreOf())}"><span>Bore Ø</span>
+          <span class="val"><input type="number" step="${u.step}" min="0" data-finish="bore" value="${boreVal}" ${wide(boreVal)}><span class="u">${u.label}</span></span></label>
         <label class="f" title="${PROFILE_HINT[state.finish.profile]} — ${otherUnit(chOf())}"><span>${edgeWord()}</span>
           <span class="val"><input type="number" step="${u.step}" min="0" data-finish="ch" value="${chVal}" ${wide(chVal)}><span class="u">${u.label}</span></span></label>
         <label class="f"><span>Material · g/cm³</span><span class="val"><span class="sel"><select data-finish="material">${Object.entries(MATERIALS).map(([k, m]) =>
@@ -541,9 +556,10 @@
       if (t.dataset.finish === 'material') {
         state.finish.material = t.value;
         const rho = $('[data-rho]'); if (rho) rho.textContent = MATERIALS[state.finish.material].rho;
-      } else if (t.dataset.finish === 'ch') {
+      } else if (t.dataset.finish === 'ch' || t.dataset.finish === 'bore') {
         const v = parseFloat(t.value); if (isNaN(v)) return;
-        state.finish.ch = +toMM(v).toFixed(4);
+        state.finish[t.dataset.finish] = +toMM(v).toFixed(4);
+        syncBores();
       }
       updateDerived();
       return;
@@ -569,6 +585,10 @@
     const on = atTarget(d, parseFloat(b.dataset.g));
     b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
   });
+  const syncBores = () => document.querySelectorAll('[data-act="bore"]').forEach(b => {
+    const on = Math.abs(boreOf() - parseFloat(b.dataset.mm)) < 0.01;
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+  });
 
   document.addEventListener('click', e => {
     const b = e.target.closest('[data-act]'), row = e.target.closest('[data-disc]');
@@ -583,7 +603,7 @@
       case 'up': if (i > 0) { state.discs.splice(i - 1, 0, state.discs.splice(i, 1)[0]); rerender(); } break;
       case 'down': if (i < state.discs.length - 1) { state.discs.splice(i + 1, 0, state.discs.splice(i, 1)[0]); rerender(); } break;
       case 'target': {
-        if (!(d.od > d.bore)) { toast('Set the outer Ø larger than the bore first'); break; }
+        if (!(d.od > boreOf())) { toast('Set the outer Ø larger than the bore first'); break; }
         d.t = +thicknessFor(d, parseFloat(b.dataset.g)).toFixed(3);
         const el = row.querySelector('[data-f="t"]');
         el.value = show(d.t); sizeInput(el); updateDerived(); break;
@@ -605,6 +625,10 @@
       case 'profile': {
         if (state.finish.profile === b.dataset.v) break;
         state.finish.profile = b.dataset.v;
+        renderFinish(); updateDerived(); break;
+      }
+      case 'bore': {
+        state.finish.bore = parseFloat(b.dataset.mm);
         renderFinish(); updateDerived(); break;
       }
       case 'units': state.units = state.units === 'mm' ? 'in' : 'mm'; renderUnits(); renderFinish(); renderRows(); persist(); break;
@@ -656,7 +680,7 @@
   // radius tool. Both faces stay flat, so discs seat square against each other.
   const ARC_STEPS = 6;
   function profileWith(d, seams) {
-    const c = chOf(), rb = boreR(d), t = d.t, R = d.od / 2, p = [];
+    const c = chOf(), rb = boreR(), t = d.t, R = d.od / 2, p = [];
     const at = (r, y) => { const l = p[p.length - 1]; if (!l || Math.hypot(l[0] - r, l[1] - y) > 1e-9) p.push([r, y]); };
     // quarter-round about (cr, cy), swept a0 -> a1
     const arc = (cr, cy, a0, a1) => {
@@ -677,10 +701,10 @@
     }
     if (round) arc(R - c, t - c, 0, Q);                    // top outer
     else { at(R, t - c); at(R - c, t); }
-    if (rb > 0) {
-      if (round) { arc(rb + c, t - c, Q, Math.PI); arc(rb + c, c, Math.PI, 1.5 * Math.PI); }
-      else { at(rb + c, t); at(rb, t - c); at(rb, c); at(rb + c, 0); }
-    } else at(0, t);
+    // The bore always takes a chamfer, never a radius: it is a lead-in for the
+    // rod, and a rolled edge there both looks wrong and guides the thread worse.
+    if (rb > 0) { at(rb + c, t); at(rb, t - c); at(rb, c); at(rb + c, 0); }
+    else at(0, t);
     return p;
   }
   const discProfile = d => profileWith(d, seamHeights(d));
@@ -850,8 +874,8 @@
     state.discs.forEach((d, i) => {
       if (!valid(d)) return;
       const m = massOf(d), seams = seamHeights(d), H = d.t;
-      rows.push([`Part ${letter(i)}`, d.qty, +d.od.toFixed(2), inch(d.od), +H.toFixed(2), inch(H), +d.bore.toFixed(2), inch(d.bore),
-        radius ? 'Radius (quarter-round)' : 'Chamfer 45°',
+      rows.push([`Part ${letter(i)}`, d.qty, +d.od.toFixed(2), inch(d.od), +H.toFixed(2), inch(H), +boreOf().toFixed(2), inch(boreOf()),
+        radius ? 'Radius outer, chamfer bore' : 'Chamfer 45°',
         chOf() ? +chOf().toFixed(2) : '—',
         segmented(d) ? `Turned to read as ${partsLabel(d)}` : 'Turned round',
         seams.length || '—', seams.length ? seams.map(y => y.toFixed(2)).join(' / ') : '—',
@@ -859,9 +883,10 @@
     });
     rows.push([]);
     rows.push(['Totals', T.n + ' discs', 'Stack height (mm)', T.len.toFixed(1), 'Mass (g)', T.mass.toFixed(1), 'Mass (oz)', (T.mass / OZ).toFixed(2)]);
-    rows.push(['Note', 'Edge profile, edge size and material are one choice for the whole job, not per part. All dimensions mm. ' +
+    rows.push(['Note', 'Bore, edge profile, edge size and material are one choice for the whole job, not per part. All dimensions mm. ' +
       (radius
-        ? 'Every edge is a quarter-round of the stated radius — both faces, outer edge and bore. Outer dia is the max dia, at mid-thickness. '
+        ? 'The two OUTER edges are a quarter-round of the stated radius; the BORE edges stay a 45° chamfer of the same size, as a lead-in for the rod. ' +
+          'Outer dia is the max dia, at mid-thickness. '
         : 'Every edge is a 45° chamfer of the stated size — both faces, outer edge and bore. Outer dia is the max dia, before the chamfer. ') +
       'A segmented part is ONE piece: at each seam height the outer dia is grooved with the same pair of edges, ' +
       (radius ? 'two quarter-rounds meeting, ' : 'two 45° cuts meeting as a 90° V, ') +
@@ -880,7 +905,7 @@
       for (let q = 0; q < d.qty; q++) {
         if (x + d.od + gap > maxW && x > gap) { x = gap; y += rowH + gap + 4; rowH = 0; }
         items.push({ cx: x + d.od / 2, cy: y + d.od / 2, d,
-          label: `Part ${letter(i)} Ø${r2(d.od)}×${r2(d.t)} bore ${r2(d.bore)}` +
+          label: `Part ${letter(i)} Ø${r2(d.od)}×${r2(d.t)} bore ${r2(boreOf())}` +
             `${chOf() ? (state.finish.profile === 'radius' ? ' r' : ' ch ') + r2(chOf()) : ''}` +
             `${segmented(d) ? ` reads as ${partsLabel(d)}` : ''}` });
         x += d.od + gap; rowH = Math.max(rowH, d.od); W = Math.max(W, x);
@@ -891,7 +916,7 @@
   function profilesSVG() {
     const { items, W, H } = layout();
     const cut = items.map(it => `<circle cx="${it.cx}" cy="${it.cy}" r="${it.d.od / 2}"/>` +
-      (it.d.bore > 0 ? `<circle cx="${it.cx}" cy="${it.cy}" r="${it.d.bore / 2}"/>` : '')).join('\n    ');
+      (boreOf() > 0 ? `<circle cx="${it.cx}" cy="${it.cy}" r="${boreOf() / 2}"/>` : '')).join('\n    ');
     const txt = items.map(it => `<text x="${it.cx}" y="${it.cy + it.d.od / 2 + 3}" text-anchor="middle">${esc(it.label)}</text>`).join('\n    ');
     return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">
@@ -910,7 +935,7 @@
     const circle = (cx, cy, r) => e.push('0', 'CIRCLE', '8', 'CUT', '10', cx, '20', cy, '30', 0, '40', r);
     items.forEach(it => {
       circle(it.cx, -it.cy, it.d.od / 2);
-      if (it.d.bore > 0) circle(it.cx, -it.cy, it.d.bore / 2);
+      if (boreOf() > 0) circle(it.cx, -it.cy, boreOf() / 2);
       e.push('0', 'TEXT', '8', 'LABELS', '10', it.cx - it.d.od / 2, '20', -(it.cy + it.d.od / 2 + 4), '30', 0, '40', 2.4, '1', it.label);
     });
     return ['0', 'SECTION', '2', 'HEADER', '9', '$INSUNITS', '70', 4, '0', 'ENDSEC',
