@@ -220,6 +220,24 @@
     aluminium: { name: 'Aluminium',        rho: 2.70,  color: 0xd6dade },
     pla:       { name: 'PLA (print test)', rho: 1.24,  color: 0xeceae4 },
   };
+  // The threads stabilisers actually use. 5/16"-24 UNF is the AMO standard on
+  // most brands, 1/4"-20 also turns up; M6/M8 are for the brands that went
+  // metric. Pitch dia is the basic form, major − 0.6495 × pitch.
+  //
+  // A disc can be drilled to clear the rod, or tapped so it screws on. Those
+  // are different masses: a clearance hole takes out the full drill, while a
+  // tapped hole only cuts to the thread flanks. Mass is modelled at pitch
+  // diameter — the standard approximation, since the thread form is close to
+  // symmetric about the pitch line — while the shop still gets the tap drill.
+  // Declared up here with MATERIALS because the state block below reads it,
+  // and a const is unreachable before its own declaration runs.
+  const THREADS = [
+    { key: '1/4-20',  label: '1/4"-20',  spec: '1/4"-20 UNC',   clearance: 6.6, pitch: 5.52, tap: 5.10 },
+    { key: '5/16-24', label: '5/16"-24', spec: '5/16"-24 UNF',  clearance: 8.2, pitch: 7.25, tap: 6.90 },
+    { key: 'M6',      label: 'M6',       spec: 'M6 × 1.0',      clearance: 6.4, pitch: 5.35, tap: 5.00 },
+    { key: 'M8',      label: 'M8',       spec: 'M8 × 1.25',     clearance: 8.4, pitch: 7.19, tap: 6.80 },
+  ];
+  const HOLES = [['Clearance', 'clearance'], ['Threaded', 'threaded']];
   const LS_KEY = 'stabaliser-weight-visualiser.v1';
 
   // ---------- state ----------
@@ -231,15 +249,18 @@
   const mkDisc = (o = {}) => ({ od: o.od ?? 25.4, t: o.t ?? 7.6, qty: o.qty ?? 1, id: id() });
   // Default finish is 2 oz seams, so the starter discs can show off what that
   // actually looks like: a 2, a 4 (one seam) and a 6 (two seams). Thicknesses
-  // are pre-solved for Ø1" steel, 8.2 mm bore, 0.6 mm chamfer — not solved via
+  // are pre-solved for Ø1" steel, tapped 5/16"-24, 0.6 mm chamfer — not via
   // thicknessFor() here, since that (and the const helpers it calls, like
   // chOf) aren't defined yet this early in the file; calling them now would
   // hit the temporal dead zone and throw before anything renders.
-  const defaultFinish = () => ({ material: 'steel', bore: 8.2, ch: 0.6, edge: 'segments', segUnit: 2, profile: 'chamfer' });
+  const defaultFinish = () => ({
+    material: 'steel', thread: '5/16-24', hole: 'threaded', bore: 7.25,
+    ch: 0.6, edge: 'segments', segUnit: 2, profile: 'chamfer',
+  });
   const defaultDiscs = () => [
-    mkDisc({ od: 25.4, qty: 1, t: 15.997 }),
-    mkDisc({ od: 25.4, qty: 1, t: 31.972 }),
-    mkDisc({ od: 25.4, qty: 1, t: 47.947 }),
+    mkDisc({ od: 25.4, qty: 1, t: 15.598 }),
+    mkDisc({ od: 25.4, qty: 1, t: 31.178 }),
+    mkDisc({ od: 25.4, qty: 1, t: 46.757 }),
   ];
   let state = {};
   try { const saved = JSON.parse(localStorage.getItem(LS_KEY)); if (saved && typeof saved === 'object') state = saved; } catch (e) {}
@@ -250,7 +271,9 @@
   if (state.finish.edge !== 'segments') state.finish.edge = 'round';
   if (state.finish.segUnit !== 1) state.finish.segUnit = 2;
   if (!(state.finish.ch >= 0)) state.finish.ch = 0.5;
-  if (!(state.finish.bore >= 0)) state.finish.bore = 8.2;
+  if (state.finish.hole !== 'clearance') state.finish.hole = 'threaded';
+  if (state.finish.thread !== null && !THREADS.some(t => t.key === state.finish.thread)) state.finish.thread = '5/16-24';
+  if (!(state.finish.bore >= 0)) state.finish.bore = 7.25;
   if (state.finish.profile !== 'radius') state.finish.profile = 'chamfer';
 
   if (!Array.isArray(state.discs) || !state.discs.length) state.discs = defaultDiscs();
@@ -271,7 +294,7 @@
   const show = mm => { const u = unit(); return +(mm / u.per).toFixed(u.dp); };
   const toMM = v => v * unit().per;
   const OD_PRESETS = [['1"', 25.4], ['1.25"', 31.75], ['1.5"', 38.1], ['2"', 50.8]];
-  const TARGETS = [2, 3, 4, 5, 6];
+  const TARGETS = [1, 2, 3, 4, 5, 6];
   // A weight badge lights up while the disc actually weighs that, the way a
   // stock Ø badge does. Tolerance is far wider than the rounding of a solved
   // thickness, but far tighter than the gap between targets.
@@ -280,11 +303,23 @@
   // ---------- geometry maths ----------
   const SEGS = 180;
   const chOf = () => Math.max(0, parseFloat(state.finish.ch) || 0);
+  const threadOf = () => THREADS.find(t => t.key === state.finish.thread) || null;
+  const tapped = () => state.finish.hole === 'threaded';
+  // What the geometry and the mass use.
   const boreOf = () => Math.max(0, parseFloat(state.finish.bore) || 0);
-  // Clearance holes for the threads stabilisers actually use. 5/16"-24 UNF is
-  // the AMO standard on most brands, 1/4"-20 also turns up; M6/M8 are here for
-  // the brands that went metric.
-  const BORES = [['1/4"-20', 6.6], ['5/16"-24', 8.2], ['M6', 6.4], ['M8', 8.4]];
+  // What the shop actually cuts: the tap drill if it is to be tapped.
+  function machineBore() {
+    const th = threadOf();
+    if (!th) return boreOf();
+    return tapped() ? th.tap : th.clearance;
+  }
+  const holeSpec = () => {
+    const th = threadOf();
+    if (!th) return tapped() ? `Tapped, ${+boreOf().toFixed(2)} mm pitch dia` : `Clearance ${+boreOf().toFixed(2)} mm`;
+    return tapped()
+      ? `Tapped ${th.spec} through — tap drill ${th.tap} mm`
+      : `Clearance for ${th.spec} — drill ${th.clearance} mm`;
+  };
   // Chamfer cuts a 45° flat; radius rolls a quarter-round the same size.
   const PROFILES = [['Chamfer', 'chamfer'], ['Rounded', 'radius']];
   const rounded = () => state.finish.profile === 'radius' && chOf() > 0;
@@ -399,6 +434,10 @@
     round: 'Plain turned edge, broken top and bottom',
     segments: u => `A seam is turned every ${u} oz of weight — the same pair of edges a real stack shows where two discs meet. Odd totals finish with a smaller disc, the way you would really stack them.`,
   };
+  const HOLE_HINT = {
+    clearance: 'Drilled to clear the rod, so the disc slides on and is trapped by an end weight',
+    threaded: 'Tapped through so the disc screws onto the rod. Leaves more metal than a clearance hole, so it weighs more — mass is modelled at the thread pitch diameter.',
+  };
   const PROFILE_HINT = {
     chamfer: 'A 45° flat cut on both faces, outer edge and bore',
     radius: 'A quarter-round of the same size on the outer edges, rolled on with a radius tool. The bore keeps its chamfer as a lead-in for the rod.',
@@ -484,14 +523,21 @@
         }).join('')}</span>
       </div>
       <div class="pick">
-        <span>Rod thread · sets the bore</span>
-        <span class="opts" role="group">${BORES.map(([l, mm]) => {
-          const on = Math.abs(boreOf() - mm) < 0.01;
-          return `<button class="opt ${on ? 'on' : ''}" data-act="bore" data-mm="${mm}" aria-pressed="${on}" title="Clearance hole for ${l} — ${mm} mm">${l}</button>`;
+        <span>Rod thread</span>
+        <span class="opts" role="group">${THREADS.map(th => {
+          const on = state.finish.thread === th.key;
+          return `<button class="opt ${on ? 'on' : ''}" data-act="thread" data-v="${th.key}" aria-pressed="${on}" title="${th.spec} — clearance ${th.clearance} mm, tap drill ${th.tap} mm">${th.label}</button>`;
+        }).join('')}</span>
+      </div>
+      <div class="pick">
+        <span>Hole${threadOf() ? ` · ${holeSpec()}` : ''}</span>
+        <span class="opts" role="group">${HOLES.map(([l, k]) => {
+          const on = (state.finish.hole === 'threaded') === (k === 'threaded');
+          return `<button class="opt ${on ? 'on' : ''}" data-act="hole" data-v="${k}" aria-pressed="${on}" title="${HOLE_HINT[k]}">${l}</button>`;
         }).join('')}</span>
       </div>
       <div class="fields three" style="margin-top: 13px">
-        <label class="f" title="Clearance hole for the stabiliser rod — ${otherUnit(boreOf())}"><span>Bore Ø</span>
+        <label class="f" title="${tapped() ? 'Pitch dia — the mass-equivalent hole for a tapped disc' : 'Clearance hole for the rod'} — ${otherUnit(boreOf())}"><span>${tapped() ? 'Bore Ø · pitch' : 'Bore Ø'}</span>
           <span class="val"><input type="number" step="${u.step}" min="0" data-finish="bore" value="${boreVal}" ${wide(boreVal)}><span class="u">${u.label}</span></span></label>
         <label class="f" title="${PROFILE_HINT[state.finish.profile]} — ${otherUnit(chOf())}"><span>${edgeWord()}</span>
           <span class="val"><input type="number" step="${u.step}" min="0" data-finish="ch" value="${chVal}" ${wide(chVal)}><span class="u">${u.label}</span></span></label>
@@ -559,7 +605,8 @@
       } else if (t.dataset.finish === 'ch' || t.dataset.finish === 'bore') {
         const v = parseFloat(t.value); if (isNaN(v)) return;
         state.finish[t.dataset.finish] = +toMM(v).toFixed(4);
-        syncBores();
+        // a hand-typed bore no longer belongs to a named thread
+        if (t.dataset.finish === 'bore') { state.finish.thread = null; renderThreadChips(); }
       }
       updateDerived();
       return;
@@ -585,10 +632,19 @@
     const on = atTarget(d, parseFloat(b.dataset.g));
     b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
   });
-  const syncBores = () => document.querySelectorAll('[data-act="bore"]').forEach(b => {
-    const on = Math.abs(boreOf() - parseFloat(b.dataset.mm)) < 0.01;
+  // Clearing the thread chips without a full re-render, so typing in the bore
+  // field does not yank the caret out from under you.
+  const renderThreadChips = () => document.querySelectorAll('[data-act="thread"]').forEach(b => {
+    const on = state.finish.thread === b.dataset.v;
     b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
   });
+
+  // Bore follows the chosen thread and hole type; typing one directly makes it
+  // custom, since we can no longer say which thread it belongs to.
+  const resolveBore = () => {
+    const th = threadOf();
+    if (th) state.finish.bore = tapped() ? th.pitch : th.clearance;
+  };
 
   document.addEventListener('click', e => {
     const b = e.target.closest('[data-act]'), row = e.target.closest('[data-disc]');
@@ -627,9 +683,14 @@
         state.finish.profile = b.dataset.v;
         renderFinish(); updateDerived(); break;
       }
-      case 'bore': {
-        state.finish.bore = parseFloat(b.dataset.mm);
-        renderFinish(); updateDerived(); break;
+      case 'thread': {
+        state.finish.thread = b.dataset.v;
+        resolveBore(); renderFinish(); updateDerived(); break;
+      }
+      case 'hole': {
+        if (state.finish.hole === b.dataset.v) break;
+        state.finish.hole = b.dataset.v;
+        resolveBore(); renderFinish(); updateDerived(); break;
       }
       case 'units': state.units = state.units === 'mm' ? 'in' : 'mm'; renderUnits(); renderFinish(); renderRows(); persist(); break;
       case 'view': {
@@ -868,13 +929,16 @@
   function partListCSV() {
     const T = totals(), q = v => `"${String(v).replace(/"/g, '""')}"`, inch = mm => +(mm / IN).toFixed(4);
     const radius = state.finish.profile === 'radius';
-    const rows = [['Part', 'Qty', 'Outer dia (mm)', 'Outer dia (in)', 'Thickness (mm)', 'Thickness (in)', 'Bore dia (mm)', 'Bore dia (in)',
+    const rows = [['Part', 'Qty', 'Outer dia (mm)', 'Outer dia (in)', 'Thickness (mm)', 'Thickness (in)',
+      'Hole', 'Drill dia (mm)', 'Drill dia (in)',
       'Edge profile', `${edgeWord()} (mm)`, 'Seams', 'Seam notches', 'Seam heights from base (mm)',
       'Material', 'Mass each (g)', 'Mass total (g)', 'Mass total (oz)']];
+    const drill = machineBore();
     state.discs.forEach((d, i) => {
       if (!valid(d)) return;
       const m = massOf(d), seams = seamHeights(d), H = d.t;
-      rows.push([`Part ${letter(i)}`, d.qty, +d.od.toFixed(2), inch(d.od), +H.toFixed(2), inch(H), +boreOf().toFixed(2), inch(boreOf()),
+      rows.push([`Part ${letter(i)}`, d.qty, +d.od.toFixed(2), inch(d.od), +H.toFixed(2), inch(H),
+        holeSpec(), +drill.toFixed(2), inch(drill),
         radius ? 'Radius outer, chamfer bore' : 'Chamfer 45°',
         chOf() ? +chOf().toFixed(2) : '—',
         segmented(d) ? `Turned to read as ${partsLabel(d)}` : 'Turned round',
@@ -883,7 +947,11 @@
     });
     rows.push([]);
     rows.push(['Totals', T.n + ' discs', 'Stack height (mm)', T.len.toFixed(1), 'Mass (g)', T.mass.toFixed(1), 'Mass (oz)', (T.mass / OZ).toFixed(2)]);
-    rows.push(['Note', 'Bore, edge profile, edge size and material are one choice for the whole job, not per part. All dimensions mm. ' +
+    rows.push(['Note', 'Hole, edge profile, edge size and material are one choice for the whole job, not per part. All dimensions mm. ' +
+      'Drill dia is the size to cut: ' + (tapped()
+        ? `the tap drill, then tap ${threadOf() ? threadOf().spec : 'to suit'} right through. Masses above are modelled on the finished tapped hole ` +
+          '(at thread pitch dia), not on the tap drill, so they are the weight of the part as delivered. '
+        : 'a clearance hole for the rod. ') +
       (radius
         ? 'The two OUTER edges are a quarter-round of the stated radius; the BORE edges stay a 45° chamfer of the same size, as a lead-in for the rod. ' +
           'Outer dia is the max dia, at mid-thickness. '
@@ -891,8 +959,7 @@
       'A segmented part is ONE piece: at each seam height the outer dia is grooved with the same pair of edges, ' +
       (radius ? 'two quarter-rounds meeting, ' : 'two 45° cuts meeting as a 90° V, ') +
       'so the part reads as a stack of separate discs. ' +
-      'Both faces are flat and clear — no facing features, so discs seat square against each other. ' +
-      'Bore is a plain through hole, not threaded.']);
+      'Both faces are flat and clear — no facing features, so discs seat square against each other.']);
     return rows.map(r => r.map(q).join(',')).join('\r\n') + '\r\n';
   }
 
@@ -905,7 +972,7 @@
       for (let q = 0; q < d.qty; q++) {
         if (x + d.od + gap > maxW && x > gap) { x = gap; y += rowH + gap + 4; rowH = 0; }
         items.push({ cx: x + d.od / 2, cy: y + d.od / 2, d,
-          label: `Part ${letter(i)} Ø${r2(d.od)}×${r2(d.t)} bore ${r2(boreOf())}` +
+          label: `Part ${letter(i)} Ø${r2(d.od)}×${r2(d.t)} hole ${r2(machineBore())}` +
             `${chOf() ? (state.finish.profile === 'radius' ? ' r' : ' ch ') + r2(chOf()) : ''}` +
             `${segmented(d) ? ` reads as ${partsLabel(d)}` : ''}` });
         x += d.od + gap; rowH = Math.max(rowH, d.od); W = Math.max(W, x);
@@ -916,7 +983,7 @@
   function profilesSVG() {
     const { items, W, H } = layout();
     const cut = items.map(it => `<circle cx="${it.cx}" cy="${it.cy}" r="${it.d.od / 2}"/>` +
-      (boreOf() > 0 ? `<circle cx="${it.cx}" cy="${it.cy}" r="${boreOf() / 2}"/>` : '')).join('\n    ');
+      (machineBore() > 0 ? `<circle cx="${it.cx}" cy="${it.cy}" r="${machineBore() / 2}"/>` : '')).join('\n    ');
     const txt = items.map(it => `<text x="${it.cx}" y="${it.cy + it.d.od / 2 + 3}" text-anchor="middle">${esc(it.label)}</text>`).join('\n    ');
     return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">
@@ -935,7 +1002,7 @@
     const circle = (cx, cy, r) => e.push('0', 'CIRCLE', '8', 'CUT', '10', cx, '20', cy, '30', 0, '40', r);
     items.forEach(it => {
       circle(it.cx, -it.cy, it.d.od / 2);
-      if (boreOf() > 0) circle(it.cx, -it.cy, boreOf() / 2);
+      if (machineBore() > 0) circle(it.cx, -it.cy, machineBore() / 2);
       e.push('0', 'TEXT', '8', 'LABELS', '10', it.cx - it.d.od / 2, '20', -(it.cy + it.d.od / 2 + 4), '30', 0, '40', 2.4, '1', it.label);
     });
     return ['0', 'SECTION', '2', 'HEADER', '9', '$INSUNITS', '70', 4, '0', 'ENDSEC',
