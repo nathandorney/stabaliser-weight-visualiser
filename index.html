@@ -26,6 +26,9 @@
   }
 
   * { box-sizing: border-box; }
+  /* Author rules like `.none { display: grid }` outrank the browser's built-in
+     [hidden] rule, so el.hidden alone would not hide anything. */
+  [hidden] { display: none !important; }
   html, body { height: 100%; }
   body { margin: 0; background: var(--paper); color: var(--ink); font: 400 14px/1.5 var(--body); overflow: hidden; -webkit-font-smoothing: antialiased; }
   button, input, select { font: inherit; color: inherit; }
@@ -142,8 +145,10 @@
   .hud { position: absolute; left: 20px; bottom: 16px; display: flex; gap: 14px; align-items: baseline; font: 12px var(--mono); color: var(--faint); }
   .hud button { color: var(--muted); }
   .hud button:hover { color: var(--ink); }
-  .none { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 14px; }
+  /* Never let the overlay swallow orbit/zoom events on the canvas beneath it. */
+  .none { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 14px; pointer-events: none; }
   .none p { margin: 0; color: var(--muted); font-size: 13px; }
+  .none .btn { pointer-events: auto; }
 
   .toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 12px); opacity: 0; background: var(--ink); color: var(--paper); padding: 9px 15px; border-radius: 3px; font-size: 13px; transition: .18s; pointer-events: none; z-index: 9; max-width: min(90vw, 480px); }
   .toast.show { transform: translate(-50%, 0); opacity: 1; }
@@ -248,7 +253,9 @@
   if (!Array.isArray(state.discs) || !state.discs.length) state.discs = defaultDiscs();
   state.discs = state.discs.map(x => mkDisc(x));   // fill in fields added since it was saved
   if (state.units !== 'in') state.units = 'mm';
-  if (state.view !== 'beside') state.view = 'stacked';
+  // Layout is a per-session viewing preference, not saved work — it always
+  // opens 'beside' so a stale saved value can't override the default.
+  state.view = 'beside';
   let selected = null;
   const persist = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) {} };
 
