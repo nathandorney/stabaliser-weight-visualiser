@@ -269,6 +269,11 @@
   const show = mm => { const u = unit(); return +(mm / u.per).toFixed(u.dp); };
   const toMM = v => v * unit().per;
   const OD_PRESETS = [['1"', 25.4], ['1.25"', 31.75], ['1.5"', 38.1], ['2"', 50.8]];
+  const TARGETS = [2, 3, 4, 5, 6];
+  // A weight badge lights up while the disc actually weighs that, the way a
+  // stock Ø badge does. Tolerance is far wider than the rounding of a solved
+  // thickness, but far tighter than the gap between targets.
+  const atTarget = (d, grams) => valid(d) && Math.abs(massOf(d) - grams) < 0.01 * OZ;
 
   // ---------- geometry maths ----------
   const SEGS = 180;
@@ -286,7 +291,7 @@
   // down, as deep as the chamfer. Turn that form at even heights and one thick
   // disc reads as a stack of thinner ones — a 4 oz that looks like two 2 oz.
   // It's a turned form, so it's rotationally symmetric: nothing to line up.
-  const EDGES = [['Round', 'round', 0], ['1 oz seams', 'segments', 1], ['2 oz seams', 'segments', 2]];
+  const EDGES = [['None', 'round', 0], ['1 oz seams', 'segments', 1], ['2 oz seams', 'segments', 2]];
   const unitOf = () => state.finish.segUnit === 1 ? 1 : 2;   // oz per apparent disc
   const segmentable = () => state.finish.edge === 'segments' && chOf() > 0;
   const plainOz = d => moment(profileWith(d, [])) * Math.PI * 2 / 1000 * MATERIALS[state.finish.material].rho / OZ;
@@ -438,8 +443,10 @@
         </div>
         <div class="pick">
           <span>Set thickness to weigh</span>
-          <span class="opts">${[2, 3, 4, 5, 6].map(oz =>
-            `<button class="opt" data-act="target" data-g="${oz * OZ}">${oz} oz</button>`).join('')}</span>
+          <span class="opts" role="group">${TARGETS.map(oz => {
+            const on = atTarget(d, oz * OZ);
+            return `<button class="opt ${on ? 'on' : ''}" data-act="target" data-g="${oz * OZ}" aria-pressed="${on}">${oz} oz</button>`;
+          }).join('')}</span>
         </div>
         <div class="fields">
           ${dim(d, 'od', 'Outer Ø')}
@@ -516,6 +523,8 @@
       const p = problem(d);
       el.querySelector('[data-warn]').textContent = p || '';
       el.classList.toggle('bad', !valid(d));
+      // both badge rows track the disc, however its numbers were changed
+      syncPresets(el, d); syncTargets(el, d);
     });
     persist(); rebuildScene();
   }
@@ -554,6 +563,10 @@
 
   const syncPresets = (row, d) => row.querySelectorAll('[data-act="od"]').forEach(b => {
     const on = Math.abs(d.od - parseFloat(b.dataset.mm)) < 0.01;
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+  });
+  const syncTargets = (row, d) => row.querySelectorAll('[data-act="target"]').forEach(b => {
+    const on = atTarget(d, parseFloat(b.dataset.g));
     b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
   });
 
