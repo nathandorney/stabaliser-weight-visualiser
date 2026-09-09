@@ -49,11 +49,13 @@
   .units button:hover { color: var(--muted); }
   .units button.on { color: var(--ink); }
 
-  /* ---------- totals ---------- */
-  .totals { display: flex; gap: 30px; padding: 20px 24px 19px; border-bottom: 1px solid var(--rule); }
-  .tot { display: grid; gap: 3px; }
-  .tot .v { font: 400 25px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
-  .tot .l { font-size: 12px; color: var(--muted); }
+  /* ---------- totals: four stats in the header ----------
+     The row wraps between stats when the header runs out of width, but each
+     stat is nowrap so a value never parts company with its unit. */
+  .stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px 21px; }
+  .stat { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+  .stat .v { font: 400 20px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .stat .l { font-size: 12px; color: var(--muted); }
 
   /* ---------- finish: applies to every disc ---------- */
   .finish { padding: 17px 24px 19px; border-bottom: 1px solid var(--rule); }
@@ -170,18 +172,18 @@
 <div id="app">
   <header>
     <div class="wordmark">Stabaliser weight visualiser</div>
+    <div class="stats" role="group" aria-label="Totals">
+      <div class="stat"><span class="v" data-oz>—</span><span class="l">oz</span></div>
+      <div class="stat"><span class="v" data-g>—</span><span class="l">g</span></div>
+      <div class="stat"><span class="v" data-len>—</span><span class="l" data-lenu>mm</span></div>
+      <div class="stat"><span class="v" data-n>0</span><span class="l" data-sizes>discs</span></div>
+    </div>
     <div class="units" id="view" role="group" aria-label="Layout"></div>
     <div class="units" id="units" role="group" aria-label="Units"></div>
   </header>
 
   <main>
     <aside>
-      <div class="totals">
-        <div class="tot"><span class="v" data-g>—</span><span class="l" data-goz>total mass</span></div>
-        <div class="tot"><span class="v" data-len>—</span><span class="l" data-lenin>stack height</span></div>
-        <div class="tot"><span class="v" data-n>0</span><span class="l" data-sizes>discs</span></div>
-      </div>
-
       <div class="finish" id="finishBlock"></div>
       <div class="rows" id="rows"></div>
       <button class="add" data-act="add">+ Add disc</button>
@@ -237,6 +239,9 @@
     { key: 'M6',      label: 'M6',       spec: 'M6 × 1.0',      clearance: 6.4, pitch: 5.35, tap: 5.00 },
     { key: 'M8',      label: 'M8',       spec: 'M8 × 1.25',     clearance: 8.4, pitch: 7.19, tap: 6.80 },
   ];
+  // Dormant: every disc is threaded now, so this toggle isn't rendered. Kept,
+  // along with the clearance branches it feeds, so it can be put back by
+  // restoring the 'Hole' pick row in renderFinish().
   const HOLES = [['Clearance', 'clearance'], ['Threaded', 'threaded']];
   // How the joint between two apparent discs is cut. 'Match edges' repeats the
   // disc's own edge form, so it reads as a real stack; the others are plain
@@ -260,7 +265,7 @@
   // hit the temporal dead zone and throw before anything renders.
   const defaultFinish = () => ({
     material: 'steel', thread: '5/16-24', hole: 'threaded', bore: 7.25,
-    ch: 0.6, edge: 'segments', segUnit: 2, profile: 'chamfer', seam: 'match',
+    ch: 0.6, edge: 'segments', segUnit: 2, profile: 'chamfer', seam: 'match', seamBlend: 0,
   });
   const defaultDiscs = () => [
     mkDisc({ od: 25.4, qty: 1, t: 15.598 }),
@@ -276,11 +281,20 @@
   if (state.finish.edge !== 'segments') state.finish.edge = 'round';
   if (state.finish.segUnit !== 1) state.finish.segUnit = 2;
   if (!(state.finish.ch >= 0)) state.finish.ch = 0.5;
-  if (state.finish.hole !== 'clearance') state.finish.hole = 'threaded';
+  // Every disc is tapped: the Clearance/Threaded toggle is no longer rendered,
+  // so force threaded and re-resolve a bore saved as a clearance drill. The
+  // clearance path below is left intact for whenever the toggle comes back.
+  if (state.finish.hole === 'clearance') {
+    state.finish.hole = 'threaded';
+    const th = THREADS.find(t => t.key === state.finish.thread);
+    if (th && Math.abs(state.finish.bore - th.clearance) < 0.005) state.finish.bore = th.pitch;
+  }
+  state.finish.hole = 'threaded';
   if (state.finish.thread !== null && !THREADS.some(t => t.key === state.finish.thread)) state.finish.thread = '5/16-24';
   if (!(state.finish.bore >= 0)) state.finish.bore = 7.25;
   if (state.finish.profile !== 'radius') state.finish.profile = 'chamfer';
   if (!SEAMS.some(([, k]) => k === state.finish.seam)) state.finish.seam = 'match';
+  if (!(state.finish.seamBlend >= 0)) state.finish.seamBlend = 0;
 
   if (!Array.isArray(state.discs) || !state.discs.length) state.discs = defaultDiscs();
   state.discs = state.discs.map(x => mkDisc(x));   // fill in fields added since it was saved
@@ -299,7 +313,7 @@
     : { label: 'mm', per: 1,  step: 0.1,   dp: 2 };
   const show = mm => { const u = unit(); return +(mm / u.per).toFixed(u.dp); };
   const toMM = v => v * unit().per;
-  const OD_PRESETS = [['1"', 25.4], ['1.25"', 31.75], ['1.5"', 38.1], ['2"', 50.8]];
+  const OD_PRESETS = [['1"', 25.4], ['1.25"', 31.75], ['1.5"', 38.1], ['1.75"', 44.45]];
   const TARGETS = [1, 2, 3, 4, 5, 6];
   // A weight badge lights up while the disc actually weighs that, the way a
   // stock Ø badge does. Tolerance is far wider than the rounding of a solved
@@ -333,14 +347,22 @@
     : state.finish.seam === 'square' ? Math.max(chOf(), 0.3) : chOf();
   const seamDepth = () => state.finish.seam === 'line'
     ? Math.min(Math.max(chOf(), 0.3), LINE_MAX_DEPTH) : chOf();
+  // A root radius on the chamfered V, softening the sharp point at its bottom.
+  // Only meaningful on a chamfer V — a radiused seam is already round, and a
+  // square groove's corners are a different feature.
+  const blendable = () => state.finish.seam === 'match' && state.finish.profile === 'chamfer' && chOf() > 0;
+  const blendMax = () => chOf() * Math.SQRT2;      // beyond this the flanks vanish
+  const seamBlendOf = () => blendable()
+    ? Math.min(Math.max(0, parseFloat(state.finish.seamBlend) || 0), blendMax()) : 0;
   // How to describe the seam groove to whoever cuts it.
   const seamSpec = () => {
     const w = +(seamHalf() * 2).toFixed(2), dp = +seamDepth().toFixed(2);
     if (state.finish.seam === 'line') return `a square groove ${w} mm wide × ${dp} mm deep`;
     if (state.finish.seam === 'square') return `a flat-bottomed groove ${w} mm wide × ${dp} mm deep`;
-    return state.finish.profile === 'radius'
-      ? `two R${dp} quarter-rounds meeting, ${w} mm wide overall`
-      : `two 45° cuts meeting as a 90° V, ${dp} mm deep and ${w} mm wide`;
+    if (state.finish.profile === 'radius') return `two R${dp} quarter-rounds meeting, ${w} mm wide overall`;
+    const b = +seamBlendOf().toFixed(2);
+    return `two 45° cuts meeting as a 90° V, ${dp} mm deep and ${w} mm wide` +
+      (b > 0 ? `, root radiused R${b} (a form tool with an R${b} nose cuts it in one pass)` : ', sharp root');
   };
   const rounded = () => state.finish.profile === 'radius' && chOf() > 0;
   const edgeWord = () => state.finish.profile === 'radius' ? 'Radius' : 'Chamfer';
@@ -531,7 +553,7 @@
   // One choice for the whole job: seams, edge profile, size and material, above
   // the per-disc list rather than repeated on every card.
   function renderFinish() {
-    const u = unit(), chVal = show(chOf()), boreVal = show(boreOf());
+    const u = unit(), chVal = show(chOf()), boreVal = show(boreOf()), blendVal = show(seamBlendOf());
     $('#finishBlock').innerHTML = `
       <span class="label">Finish · applies to every disc</span>
       <div class="pick">
@@ -557,26 +579,22 @@
         }).join('')}</span>
       </div>
       <div class="pick">
-        <span>Rod thread</span>
+        <span>Rod thread${threadOf() ? ` · ${holeSpec()}` : ''}</span>
         <span class="opts" role="group">${THREADS.map(th => {
           const on = state.finish.thread === th.key;
-          return `<button class="opt ${on ? 'on' : ''}" data-act="thread" data-v="${th.key}" aria-pressed="${on}" title="${th.spec} — clearance ${th.clearance} mm, tap drill ${th.tap} mm">${th.label}</button>`;
+          return `<button class="opt ${on ? 'on' : ''}" data-act="thread" data-v="${th.key}" aria-pressed="${on}" title="${th.spec} — tap drill ${th.tap} mm">${th.label}</button>`;
         }).join('')}</span>
       </div>
-      <div class="pick">
-        <span>Hole${threadOf() ? ` · ${holeSpec()}` : ''}</span>
-        <span class="opts" role="group">${HOLES.map(([l, k]) => {
-          const on = (state.finish.hole === 'threaded') === (k === 'threaded');
-          return `<button class="opt ${on ? 'on' : ''}" data-act="hole" data-v="${k}" aria-pressed="${on}" title="${HOLE_HINT[k]}">${l}</button>`;
-        }).join('')}</span>
-      </div>
-      <div class="fields three" style="margin-top: 13px">
+      <div class="fields ${blendable() ? '' : 'three'}" style="margin-top: 13px">
         <label class="f" title="${tapped() ? 'Pitch dia — the mass-equivalent hole for a tapped disc' : 'Clearance hole for the rod'} — ${otherUnit(boreOf())}"><span>${tapped() ? 'Bore Ø · pitch' : 'Bore Ø'}</span>
           <span class="val"><input type="number" step="${u.step}" min="0" data-finish="bore" value="${boreVal}" ${wide(boreVal)}><span class="u">${u.label}</span></span></label>
         <label class="f" title="${PROFILE_HINT[state.finish.profile]} — ${otherUnit(chOf())}"><span>${edgeWord()}</span>
           <span class="val"><input type="number" step="${u.step}" min="0" data-finish="ch" value="${chVal}" ${wide(chVal)}><span class="u">${u.label}</span></span></label>
         <label class="f"><span>Material · g/cm³</span><span class="val"><span class="sel"><select data-finish="material">${Object.entries(MATERIALS).map(([k, m]) =>
           `<option value="${k}" ${k === state.finish.material ? 'selected' : ''}>${m.name}</option>`).join('')}</select></span><span class="u" data-rho>${MATERIALS[state.finish.material].rho}</span></span></label>
+        ${!blendable() ? '' : `
+        <label class="f" title="Radius at the bottom of the seam V, as a round-nosed form tool leaves it. 0 is a sharp point; up to ${+blendMax().toFixed(2)} mm here — ${otherUnit(seamBlendOf())}"><span>Seam root R</span>
+          <span class="val"><input type="number" step="${u.step}" min="0" max="${show(blendMax())}" data-finish="seamBlend" value="${blendVal}" ${wide(blendVal)}><span class="u">${u.label}</span></span></label>`}
       </div>`;
   }
 
@@ -605,10 +623,14 @@
 
   function updateDerived() {
     const T = totals(), any = T.n > 0;
-    $('[data-g]').textContent = any ? fmt(T.mass) + ' g' : '—';
-    $('[data-goz]').textContent = any ? `total mass · ${fmt(T.mass / OZ, 2)} oz` : 'total mass';
-    $('[data-len]').textContent = any ? fmt(T.len) + ' mm' : '—';
-    $('[data-lenin]').textContent = any ? `stack height · ${fmt(T.len / IN, 2)} in` : 'stack height';
+    // Mass reads in both oz and grams; height follows the unit toggle, with
+    // the other unit on the hover title so nothing has to be converted by hand.
+    const inches = state.units === 'in';
+    $('[data-oz]').textContent = any ? fmt(T.mass / OZ, 2) : '—';
+    $('[data-g]').textContent = any ? fmt(T.mass) : '—';
+    $('[data-len]').textContent = any ? (inches ? fmt(T.len / IN, 3) : fmt(T.len)) : '—';
+    $('[data-lenu]').textContent = unit().label;
+    $('[data-len]').closest('.stat').title = any ? `Stack height — ${otherUnit(T.len)}` : 'Stack height';
     $('[data-n]').textContent = T.n;
     $('[data-sizes]').textContent = state.discs.length
       ? `discs · ${state.discs.length} size${state.discs.length === 1 ? '' : 's'}` : 'discs';
@@ -636,7 +658,7 @@
       if (t.dataset.finish === 'material') {
         state.finish.material = t.value;
         const rho = $('[data-rho]'); if (rho) rho.textContent = MATERIALS[state.finish.material].rho;
-      } else if (t.dataset.finish === 'ch' || t.dataset.finish === 'bore') {
+      } else if (['ch', 'bore', 'seamBlend'].includes(t.dataset.finish)) {
         const v = parseFloat(t.value); if (isNaN(v)) return;
         state.finish[t.dataset.finish] = +toMM(v).toFixed(4);
         // a hand-typed bore no longer belongs to a named thread
@@ -726,12 +748,12 @@
         state.finish.thread = b.dataset.v;
         resolveBore(); renderFinish(); updateDerived(); break;
       }
-      case 'hole': {
+      case 'hole': {   // dormant with HOLES — nothing emits data-act="hole" now
         if (state.finish.hole === b.dataset.v) break;
         state.finish.hole = b.dataset.v;
         resolveBore(); renderFinish(); updateDerived(); break;
       }
-      case 'units': state.units = state.units === 'mm' ? 'in' : 'mm'; renderUnits(); renderFinish(); renderRows(); persist(); break;
+      case 'units': state.units = state.units === 'mm' ? 'in' : 'mm'; renderUnits(); renderFinish(); renderRows(); updateDerived(); persist(); break;
       case 'view': {
         if (state.view === b.dataset.v) break;
         state.view = b.dataset.v; renderView(); persist(); rebuildScene(); fitView(); break;
@@ -783,13 +805,14 @@
     const c = chOf(), rb = boreR(), t = d.t, R = d.od / 2, p = [];
     const at = (r, y) => { const l = p[p.length - 1]; if (!l || Math.hypot(l[0] - r, l[1] - y) > 1e-9) p.push([r, y]); };
     // quarter-round about (cr, cy), swept a0 -> a1
-    const arc = (cr, cy, a0, a1) => {
+    const arcAt = (cr, cy, rad, a0, a1) => {
       for (let i = 0; i <= ARC_STEPS; i++) {
         const a = a0 + (a1 - a0) * i / ARC_STEPS;
-        at(cr + c * Math.cos(a), cy + c * Math.sin(a));
+        at(cr + rad * Math.cos(a), cy + rad * Math.sin(a));
       }
     };
-    const round = rounded(), Q = Math.PI / 2;
+    const arc = (cr, cy, a0, a1) => arcAt(cr, cy, c, a0, a1);
+    const round = rounded(), Q = Math.PI / 2, blend = seamBlendOf();
 
     at(rb > 0 ? rb + c : 0, 0);
     if (round) arc(R - c, c, -Q, 0);                       // bottom outer
@@ -802,6 +825,14 @@
         const hw = seamHalf(), dp = seamDepth();
         at(R, y - hw); at(R - dp, y - hw); at(R - dp, y + hw); at(R, y + hw);
       } else if (round) { arc(R - c, y - c, 0, Q); arc(R - c, y + c, -Q, 0); }
+      else if (blend > 0) {
+        // A 90° V with a radiused root — what a round-nosed form tool leaves,
+        // since a tool with a nose radius cannot reach the sharp point. The arc
+        // is tangent to both 45° flanks, so its centre sits a further r√2 out.
+        at(R, y - c);
+        arcAt(R - c + blend * Math.SQRT2, y, blend, 1.25 * Math.PI, 0.75 * Math.PI);
+        at(R, y + c);
+      }
       else { at(R, y - c); at(R - c, y); at(R, y + c); }
     }
     if (round) arc(R - c, t - c, 0, Q);                    // top outer
