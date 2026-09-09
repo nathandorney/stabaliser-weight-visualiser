@@ -238,6 +238,11 @@
     { key: 'M8',      label: 'M8',       spec: 'M8 × 1.25',     clearance: 8.4, pitch: 7.19, tap: 6.80 },
   ];
   const HOLES = [['Clearance', 'clearance'], ['Threaded', 'threaded']];
+  // How the joint between two apparent discs is cut. 'Match edges' repeats the
+  // disc's own edge form, so it reads as a real stack; the others are plain
+  // turned grooves — a fine scribed line, or a wider flat-bottomed gap.
+  // Up here with THREADS because the state block below reads it.
+  const SEAMS = [['Match edges', 'match'], ['Line', 'line'], ['Square', 'square']];
   const LS_KEY = 'stabaliser-weight-visualiser.v1';
 
   // ---------- state ----------
@@ -255,7 +260,7 @@
   // hit the temporal dead zone and throw before anything renders.
   const defaultFinish = () => ({
     material: 'steel', thread: '5/16-24', hole: 'threaded', bore: 7.25,
-    ch: 0.6, edge: 'segments', segUnit: 2, profile: 'chamfer',
+    ch: 0.6, edge: 'segments', segUnit: 2, profile: 'chamfer', seam: 'match',
   });
   const defaultDiscs = () => [
     mkDisc({ od: 25.4, qty: 1, t: 15.598 }),
@@ -275,6 +280,7 @@
   if (state.finish.thread !== null && !THREADS.some(t => t.key === state.finish.thread)) state.finish.thread = '5/16-24';
   if (!(state.finish.bore >= 0)) state.finish.bore = 7.25;
   if (state.finish.profile !== 'radius') state.finish.profile = 'chamfer';
+  if (!SEAMS.some(([, k]) => k === state.finish.seam)) state.finish.seam = 'match';
 
   if (!Array.isArray(state.discs) || !state.discs.length) state.discs = defaultDiscs();
   state.discs = state.discs.map(x => mkDisc(x));   // fill in fields added since it was saved
@@ -322,6 +328,20 @@
   };
   // Chamfer cuts a 45° flat; radius rolls a quarter-round the same size.
   const PROFILES = [['Chamfer', 'chamfer'], ['Rounded', 'radius']];
+  const LINE_HALF = 0.25, LINE_MAX_DEPTH = 0.6;
+  const seamHalf = () => state.finish.seam === 'line' ? LINE_HALF
+    : state.finish.seam === 'square' ? Math.max(chOf(), 0.3) : chOf();
+  const seamDepth = () => state.finish.seam === 'line'
+    ? Math.min(Math.max(chOf(), 0.3), LINE_MAX_DEPTH) : chOf();
+  // How to describe the seam groove to whoever cuts it.
+  const seamSpec = () => {
+    const w = +(seamHalf() * 2).toFixed(2), dp = +seamDepth().toFixed(2);
+    if (state.finish.seam === 'line') return `a square groove ${w} mm wide × ${dp} mm deep`;
+    if (state.finish.seam === 'square') return `a flat-bottomed groove ${w} mm wide × ${dp} mm deep`;
+    return state.finish.profile === 'radius'
+      ? `two R${dp} quarter-rounds meeting, ${w} mm wide overall`
+      : `two 45° cuts meeting as a 90° V, ${dp} mm deep and ${w} mm wide`;
+  };
   const rounded = () => state.finish.profile === 'radius' && chOf() > 0;
   const edgeWord = () => state.finish.profile === 'radius' ? 'Radius' : 'Chamfer';
   const boreR = () => boreOf() / 2;
@@ -373,11 +393,12 @@
     if (c >= wallOf(d) / 2) return `${edgeWord()} is too big for the wall width`;
     if (state.finish.edge === 'segments') {
       if (!(c > 0)) return `Seams need a ${edgeWord().toLowerCase()} — a seam is two of them meeting`;
+      if (seamDepth() >= wallOf(d)) return 'Seam groove is deeper than the wall';
       const parts = segParts(d);
       if (parts.length >= 2) {
         const tot = parts.reduce((a, b) => a + b, 0);
-        if (d.t * Math.min(...parts) / tot <= 2 * c + 0.3)
-          return `${edgeWord()} is too big for a seam every ${unitOf()} oz`;
+        if (d.t * Math.min(...parts) / tot <= 2 * seamHalf() + 0.3)
+          return `Seam is too wide to fit one every ${unitOf()} oz`;
       }
     }
     return null;
@@ -433,6 +454,11 @@
   const EDGE_HINT = {
     round: 'Plain turned edge, broken top and bottom',
     segments: u => `A seam is turned every ${u} oz of weight — the same pair of edges a real stack shows where two discs meet. Odd totals finish with a smaller disc, the way you would really stack them.`,
+  };
+  const SEAM_HINT = {
+    match: 'The joint repeats the disc’s own edge form — two chamfers or two radii meeting, exactly what a real stack shows',
+    line: `A fine scribed groove, ${LINE_HALF * 2} mm wide — the joint reads as a line rather than a gap`,
+    square: 'A flat-bottomed groove as wide as the edge size, so the joint reads as a visible gap between discs',
   };
   const HOLE_HINT = {
     clearance: 'Drilled to clear the rod, so the disc slides on and is trapped by an end weight',
@@ -515,6 +541,14 @@
           return `<button class="opt ${on ? 'on' : ''}" data-act="edge" data-v="${k}" data-u="${eu}" aria-pressed="${on}" title="${eu ? EDGE_HINT.segments(eu) : EDGE_HINT.round}">${l}</button>`;
         }).join('')}</span>
       </div>
+      ${state.finish.edge !== 'segments' ? '' : `
+      <div class="pick">
+        <span>Seam form</span>
+        <span class="opts" role="group">${SEAMS.map(([l, k]) => {
+          const on = state.finish.seam === k;
+          return `<button class="opt ${on ? 'on' : ''}" data-act="seam" data-v="${k}" aria-pressed="${on}" title="${SEAM_HINT[k]}">${l}</button>`;
+        }).join('')}</span>
+      </div>`}
       <div class="pick">
         <span>Edge profile</span>
         <span class="opts" role="group">${PROFILES.map(([l, k]) => {
@@ -683,6 +717,11 @@
         state.finish.profile = b.dataset.v;
         renderFinish(); updateDerived(); break;
       }
+      case 'seam': {
+        if (state.finish.seam === b.dataset.v) break;
+        state.finish.seam = b.dataset.v;
+        renderFinish(); updateDerived(); break;
+      }
       case 'thread': {
         state.finish.thread = b.dataset.v;
         resolveBore(); renderFinish(); updateDerived(); break;
@@ -757,7 +796,12 @@
     else { at(R - c, 0); at(R, c); }
     // each seam is the same pair of edges a real stack would show at its joint
     for (const y of seams) {
-      if (round) { arc(R - c, y - c, 0, Q); arc(R - c, y + c, -Q, 0); }
+      const form = state.finish.seam;
+      if (form === 'line' || form === 'square') {
+        // a turned groove: straight in, along the floor, straight back out
+        const hw = seamHalf(), dp = seamDepth();
+        at(R, y - hw); at(R - dp, y - hw); at(R - dp, y + hw); at(R, y + hw);
+      } else if (round) { arc(R - c, y - c, 0, Q); arc(R - c, y + c, -Q, 0); }
       else { at(R, y - c); at(R - c, y); at(R, y + c); }
     }
     if (round) arc(R - c, t - c, 0, Q);                    // top outer
@@ -956,8 +1000,7 @@
         ? 'The two OUTER edges are a quarter-round of the stated radius; the BORE edges stay a 45° chamfer of the same size, as a lead-in for the rod. ' +
           'Outer dia is the max dia, at mid-thickness. '
         : 'Every edge is a 45° chamfer of the stated size — both faces, outer edge and bore. Outer dia is the max dia, before the chamfer. ') +
-      'A segmented part is ONE piece: at each seam height the outer dia is grooved with the same pair of edges, ' +
-      (radius ? 'two quarter-rounds meeting, ' : 'two 45° cuts meeting as a 90° V, ') +
+      'A segmented part is ONE piece: at each seam height the outer dia is grooved — ' + seamSpec() + ' — ' +
       'so the part reads as a stack of separate discs. ' +
       'Both faces are flat and clear — no facing features, so discs seat square against each other.']);
     return rows.map(r => r.map(q).join(',')).join('\r\n') + '\r\n';
